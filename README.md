@@ -1,57 +1,118 @@
 # Cubo Mágico 3D em Python
 
-Este é um projeto de Cubo Mágico 3D interativo desenvolvido com Python, PyGame e PyOpenGL para a disciplina de Computação Gráfica.
+Este é um projeto de Cubo Mágico 3D interativo desenvolvido com **Python, Pygame e PyOpenGL**
+(ideal para estudos de Computação Gráfica).
 
 ## Funcionalidades
-- Visualização 3D do cubo.
-- Rotação da câmera com o mouse.
+
+- Visualização 3D do cubo com cores padrão WCA simplificadas.
+- Rotação de câmera livre com o mouse (vertical e horizontal).
 - Zoom com a roda do mouse.
-- Rotação das faces do cubo via teclado.
-- Rotação inversa das faces com a tecla Shift.
-- Botão de ajuda com instruções de uso.
-- Função de embaralhar.
+- Rotação de todas as faces do cubo via teclado.
+- Rotação inversa (anti-horária) com a tecla `Shift`.
+- Botão interativo `?` com instruções de uso em tela.
+- Função de embaralhar (com histórico acumulado).
+- Solução automática animada que desfaz todo o histórico de embaralhamentos.
+
+---
 
 ## Controles
+
 ### Teclado
-- **L / R**: Girar faces Laterais (Left / Right).
-- **U / D**: Girar faces Superior / Inferior (Up / Down).
-- **F / B**: Girar faces Frontal / Traseira (Front / Back).
-- **Shift + Tecla**: Girar face no sentido anti-horário.
-- **S**: Embaralhar o cubo (Scramble).
-- **K**: Solucionar o cubo automaticamente.
+
+| Tecla               | Ação                                           |
+|---------------------|------------------------------------------------|
+| `L` / `R`           | Girar face Esquerda / Direita (horário)        |
+| `U` / `D`           | Girar face Superior / Inferior (horário)       |
+| `F` / `B`           | Girar face Frontal / Traseira (horário)        |
+| `Shift` + (face)    | Girar face no sentido anti-horário             |
+| `S`                 | Embaralhar o cubo (várias vezes cumulativo)    |
+| `K`                 | Solucionar o cubo automaticamente (animado)    |
 
 ### Mouse
-- **Botão Esquerdo**: Rotacionar a visualização.
-- **Scroll**: Zoom In / Out.
-- **Botão "?" (canto superior esquerdo)**: Abrir/fechar instruções de uso.
 
-## Cores das Faces
-- **Amarelo**: Frontal (F)
-- **Branco**: Traseira (B)
-- **Vermelho**: Direita (R)
-- **Laranja**: Esquerda (L)
-- **Azul**: Superior (U)
-- **Verde**: Inferior (D)
+- **Botão esquerdo + arrastar**: Rotacionar a câmera.
+- **Roda do mouse**: Zoom in / zoom out.
+- **Botão `?` (canto superior esquerdo)**: Abrir/fechar instruções.
 
-## Como Executar
-1. Certifique-se de ter o Python instalado.
-2. Instale as dependências:
+---
+
+## Cores das faces (configuração atual)
+
+- **Amarelo** → Frontal (F)
+- **Branco**  → Traseira (B)
+- **Vermelho** → Direita (R)
+- **Laranja** → Esquerda (L)
+- **Azul**    → Superior (U)
+- **Verde**   → Inferior (D)
+
+---
+
+## Estrutura de pastas
+
+```text
+rubiks-cube-3d/
+├── src/
+│   ├── main.py
+│   ├── cube/
+│   │   ├── cube.py
+│   │   ├── cubie.py
+│   │   └── colors.py
+│   ├── graphics/
+│   │   ├── renderer.py
+│   │   ├── camera.py
+│   │   ├── matrix.py
+│   │   └── transforms.py
+│   ├── input/
+│   │   └── controller.py
+│   └── solver/
+│       └── solver.py
+├── tests/
+├── assets/
+├── README.md
+└── requirements.txt
+```
+
+### Descrição dos módulos
+
+- **src/main.py** → ponto de entrada da aplicação; configura o ambiente de execução e inicia o sistema de renderização.
+- **src/cube/** → contém a lógica e o estado do Cubo Mágico, incluindo os cubinhos, cores, posições e operações do cubo.
+- **src/graphics/** → responsável pela renderização 3D com OpenGL, gerenciamento da câmera e operações matemáticas utilizadas nas transformações e matrizes.
+- **src/input/controller.py** → processa as entradas do usuário, como eventos de teclado e mouse, e as converte em ações dentro do jogo.
+- **src/solver/solver.py** → responsável pela lógica de resolução automática do cubo, incluindo a execução animada dos movimentos e estruturas preparadas para futuras implementações de métodos de resolução.
+- **tests/** → diretório reservado para os testes automatizados dos módulos do projeto.
+- **assets/** → armazena recursos externos utilizados pela aplicação, como fontes, texturas, imagens e outros arquivos.
+- **requirements.txt** → lista as dependências Python necessárias para executar o projeto.
+
+---
+
+## Como executar
+
+1. Instale o Python 3.8+ (recomendado 3.11/3.12).
+2. Crie um ambiente virtual (opcional, mas recomendado):
    ```bash
-   pip install pygame PyOpenGL PyOpenGL-accelerate
+   python -m venv .venv
+   source .venv/bin/activate      # Linux/macOS
+   # .venv\Scripts\activate      # Windows
    ```
-3. Execute o programa:
+3. Instale as dependências:
    ```bash
-   python main.py
+   pip install -r requirements.txt
    ```
+4. Execute a aplicação:
+   ```bash
+   python src/main.py
+   ```
+   > Alternativa (se preferir rodar como módulo):
+   > ```bash
+   > PYTHONPATH=src python -m main
+   > ```
 
-## Estrutura do Código
-- `main.py`: Ponto de entrada do programa.
-- `renderer.py`: Gerencia a janela, o loop principal, a renderização OpenGL e a interface do usuário.
-- `cube.py`: Lógica do cubo (conjunto de cubies e rotações de faces).
-- `cubie.py`: Representação de cada pequeno cubo individual.
-- `matrix.py`: Operações matemáticas de matrizes para rotações 3D.
-- `camera.py`: Controle da visualização 3D.
-- `input.py`: Processamento de entradas do usuário.
-- `colors.py`: Definição das cores das faces.
-- `solver.py`: Solucionador automático do cubo (método de camadas).
-- `transforms.py`: Arquivo reservado para transformações adicionais (vazio por enquanto).
+---
+
+## Observações
+
+- O solucionador atual desfaz **exatamente** os movimentos de `scramble()` em ordem inversa.
+  Isso é o suficiente para garantir que o cubo volte ao estado resolvido com animação completa.
+- A estrutura já está preparada para implementar futuramente o **método de camadas
+  (Layer-by-Layer)** real. Os placeholders estão em `src/solver/solver.py`.
