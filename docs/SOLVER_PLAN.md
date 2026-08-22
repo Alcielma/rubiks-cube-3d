@@ -1,0 +1,166 @@
+# Development Plan: General-Purpose Cube Solver
+
+## Problem statement
+
+`CubeSolver.solve()` currently only reverses `Cube.scramble_history` — it can
+undo exactly the moves `scramble()` made, in reverse, with each angle negated.
+It cannot solve:
+
+- A cube scrambled partly by hand (`L/R/U/D/F/B` keys), since manual turns
+  are never recorded in `scramble_history`.
+- A cube whose history was cleared/lost (e.g. after a previous solve, then a
+  few more manual turns).
+- Any state set up independently of this app's own move log.
+
+Goal: make `K` solve the cube from **any legally-reachable state**, by reading
+the cube's current piece positions/orientations directly instead of relying
+on a move log. Every state produced by real quarter-turns is solvable by
+construction, so we don't need illegal-state detection — just a real
+solving algorithm.
+
+The natural fit is the **beginner's Layer-By-Layer (LBL) method**, since
+`src/solver/solver.py` already has placeholder methods named for exactly
+this method (`solve_layer1_cross`, `solve_layer1_corners`, `solve_layer2`,
+`solve_layer3_cross`, `solve_layer3_orient_corners`,
+`solve_layer3_position_corners`, `solve_layer3_position_edges`).
+
+---
+
+## Phase 0 — Foundations (refactor before adding solving logic)
+
+Goal: give the solver a clean, non-graphics API to read/mutate cube state,
+and a single source of truth for move execution.
+
+- Add `get_corner_cubie(color1, color2, color3)` next to the existing
+  `get_edge_cubie(color1, color2)` in `solver.py`.
+- Add `get_center_color(face)` — centers never move, so this is the fixed
+  reference for "what color belongs on this face."
+- Unify move application. Today the same concept is expressed three
+  different ways:
+  - `InputHandler` calls `cube.rotate_face(axis, index, angle)` directly.
+  - `Cube.scramble()` re-implements the rotation math inline instead of
+    calling `rotate_face`.
+  - `CubeSolver` has unused `move_L`/`move_L_prime`/etc. helpers that push
+    `(name, axis, index, angle)` onto `renderer.move_queue`, but `solve()`
+    itself bypasses them and pushes tuples directly.
+
+  Consolidate to one path: a `Cube.apply_move(notation)` (or equivalent)
+  that all three call sites use, so future algorithm code can't drift out
+  of sync with manual/scramble behavior.
+- Add 180° turn support. LBL algorithms use double moves (`U2`, `R2`, ...)
+  constantly; today only ±90° is exercised. Verify `Cube.update()`'s step
+  clamping and `Matrix3.rotation_*` behave correctly for a 180° target, and
+  extend `move_queue` tuples / notation parsing to include doubles.
+- Define a standard move-notation parser: `U, U', U2, D, D', D2, L, R, F, B,
+  ...` → `(axis, index, angle)`, matching this project's fixed color/axis
+  scheme (documented in `README.md`'s "Cores das faces" section).
+
+**Exit criteria:** manual keys, `scramble()`, and the solver all route
+through the same move-application function; a 180° move animates and
+updates logical state correctly; existing headless consistency tests
+(from this session) still pass.
+
+---
+
+## Phase 1 — Bottom cross (first layer edges)
+
+- Implement `solve_layer1_cross`: find the 4 edges containing the bottom
+  center's color; for each, case-switch on its current layer (top/middle/
+  bottom) and orientation, apply the matching short algorithm to place it
+  correctly without disturbing previously-placed cross edges.
+- **Test:** headless harness applies the cross-solving step alone to ~500
+  randomized states; assert all 4 bottom edges end up correctly placed and
+  oriented (rest of cube state is irrelevant at this stage).
+
+## Phase 2 — First layer corners
+
+- Implement `solve_layer1_corners`: locate each bottom-color corner, use
+  the standard repeated trigger (e.g. `R U R' U'`) with `U`-layer setup
+  moves to insert it correctly, without disturbing the completed cross.
+- **Test:** bottom face fully solved (cross + corners) from ~500 random
+  states, cross from Phase 1 still intact.
+
+## Phase 3 — Second layer edges (F2L)
+
+- Implement `solve_layer2`: locate the 4 edges with no top/bottom color,
+  insert each into its slot via the standard left-insert/right-insert
+  algorithms (using `U` setup), without disturbing layers 1.
+- **Test:** first two layers fully solved from ~500 random states.
+
+## Phase 4 — Last layer orientation (2-look OLL)
+
+- `solve_layer3_cross`: orient the last layer's edges (dot / L-shape /
+  line cases → matching algorithm), repeating with `U` rotations between
+  attempts until the top-facing edges all match.
+- `solve_layer3_orient_corners`: orient the last layer's corners (repeated
+  Sune/Anti-Sune-family algorithm + `U` between corners) until all 4 show
+  the top color.
+- Scope: beginner 2-look OLL (a handful of cases), not the full 57-case OLL.
+- **Test:** whole top face shows one color, first two layers still intact,
+  from ~500 random states.
+
+## Phase 5 — Last layer permutation (2-look PLL)
+
+- `solve_layer3_position_corners`: cycle last-layer corners into correct
+  position (one corner-cycling algorithm + `U`-search over the 4
+  rotations to find/verify the right setup).
+- `solve_layer3_position_edges`: cycle last-layer edges into position
+  (one edge-cycling algorithm), then final `U` alignment (AUF).
+- **Test:** cube fully solved from ~500 random states (this is the full
+  pipeline end to end).
+
+## Phase 6 — Orchestration & integration
+
+- Rewrite `CubeSolver.solve()` to run Phases 1–5 against the cube's
+  *current* state, independent of `scramble_history`. Drop (or keep only
+  as an optional debug fast-path) the history-reversal logic.
+- `InputHandler`'s `K` handler no longer needs `scramble_history` to be
+  non-empty — remove that implicit precondition; `solve()` should just
+  early-return if already solved.
+- Add a move-count safety cap (e.g. abort with a clear log message past
+  ~500 moves) so a gap in case-detection logic fails loudly instead of
+  hanging the solver thread forever.
+
+## Phase 7 — UX polish (optional)
+
+- Beginner LBL solutions are long (~100–150 turns from a 20–25 move
+  scramble). Consider a faster `animation_speed` during solve, or a
+  toggle to skip animation entirely, plus an on-screen move counter.
+
+## Phase 8 — Testing strategy (throughout, not just at the end)
+
+- Extend the headless test harness already used to validate the
+  history-reversal solver: generate states via (a) `scramble()`, (b)
+  random *manual* moves not recorded in any history, and (c) mixes of
+  both — then assert `is_solved()` after running the new solver. (b) is
+  the key new capability this plan adds over the current implementation.
+- Run each phase's isolated test (Phases 1–5 above) before wiring
+  everything together in Phase 6 — this makes it far easier to localize a
+  bad case-detection branch.
+- Target ≥1000 random trials per phase before calling it done, matching
+  the rigor used to validate the current reversal-based solver.
+
+## Phase 9 — Stretch goal (optional, not required for "solve any state")
+
+- Once beginner LBL is solid, consider an optimal/near-optimal solver
+  (Kociemba's two-phase algorithm) as an advanced mode behind a flag.
+  This needs coordinate representations and precomputed pruning tables —
+  substantially more work than LBL, and out of scope unless specifically
+  wanted later.
+
+---
+
+## Key risks
+
+- **Duplicated move logic** (Phase 0) is the most valuable early fix —
+  every later phase adds moves programmatically, so any divergence
+  between `scramble()`'s inline math and `rotate_face()` becomes a subtle,
+  hard-to-localize bug once case-detection algorithms are layered on top.
+- **No 180° move support today** — must be added before any LBL algorithm
+  can be encoded, since `U2`/`R2`/etc. appear in nearly every trigger.
+- **Case-detection correctness is the actual hard part**, not the move
+  execution (already proven reliable in the reversal solver). Build and
+  test each phase in isolation first.
+- Cube-local axes (not camera-relative) are already used correctly by
+  `rotate_face` — this must be preserved so algorithms stay valid
+  regardless of camera orientation.
