@@ -1,5 +1,10 @@
 # Development Plan: General-Purpose Cube Solver
 
+> **Status:** Phase 0 (foundations) and Phase 1 (bottom cross) are done.
+> See `docs/CHANGELOG.md` for what actually changed in each phase, verified
+> results, and any bugs found along the way. This file stays a plan of
+> record; the changelog is the detailed history.
+
 ## Problem statement
 
 `CubeSolver.solve()` currently only reverses `Cube.scramble_history` — it can
@@ -26,7 +31,7 @@ this method (`solve_layer1_cross`, `solve_layer1_corners`, `solve_layer2`,
 
 ---
 
-## Phase 0 — Foundations (refactor before adding solving logic)
+## Phase 0 — Foundations (refactor before adding solving logic) — ✅ done
 
 Goal: give the solver a clean, non-graphics API to read/mutate cube state,
 and a single source of truth for move execution.
@@ -62,15 +67,19 @@ updates logical state correctly; existing headless consistency tests
 
 ---
 
-## Phase 1 — Bottom cross (first layer edges)
+## Phase 1 — Bottom cross (first layer edges) — ✅ done
 
-- Implement `solve_layer1_cross`: find the 4 edges containing the bottom
-  center's color; for each, case-switch on its current layer (top/middle/
-  bottom) and orientation, apply the matching short algorithm to place it
-  correctly without disturbing previously-placed cross edges.
-- **Test:** headless harness applies the cross-solving step alone to ~500
-  randomized states; assert all 4 bottom edges end up correctly placed and
-  oriented (rest of cube state is irrelevant at this stage).
+- Implemented `solve_layer1_cross` — but not via a hand-derived case table
+  as originally sketched here. A generic BFS (`solver/search.py`) proved
+  both simpler and more robust: manually enumerating every
+  position/orientation/already-placed-edges case is exactly the kind of
+  thing that fails silently on a case nobody thought of (see the
+  `get_global_colors` bug in the changelog). Each edge's placement is
+  found by searching for the shortest move sequence that keeps all
+  previously-placed edges fixed while placing the next one.
+- **Test:** 1500 randomized headless trials (scramble lengths 1-100) — all
+  solved, ~26ms/trial. Live GUI run confirmed the animated path too. See
+  `docs/CHANGELOG.md` for full results.
 
 ## Phase 2 — First layer corners
 

@@ -7,7 +7,7 @@ import random
 
 from cube.cubie import Cubie
 from cube.notation import parse_move
-from graphics.matrix import Matrix3
+from graphics.matrix import Matrix3, rotation_matrix_for_axis
 
 
 class Cube:
@@ -51,12 +51,7 @@ class Cube:
     @staticmethod
     def _rotation_matrix(axis, angle):
         """Constrói a matriz de rotação para o eixo (0=x, 1=y, 2=z) e ângulo dados."""
-        if axis == 0:
-            return Matrix3.rotation_x(angle)
-        elif axis == 1:
-            return Matrix3.rotation_y(angle)
-        else:
-            return Matrix3.rotation_z(angle)
+        return rotation_matrix_for_axis(axis, angle)
 
     def _apply_slice_rotation(self, axis, index, matrix):
         """Aplica permanentemente uma matriz de rotação a todos os cubinhos da fatia (axis, index)."""

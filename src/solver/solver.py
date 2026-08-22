@@ -10,8 +10,9 @@ como métodos placeholder para eventuais implementações futuras.
 """
 import time
 
-from cube.colors import WHITE, YELLOW, BLUE, GREEN, RED, ORANGE, BLACK
-from cube.notation import FACE_AXIS_INDEX, parse_move
+from cube.colors import BLACK
+from cube.notation import FACE_AXIS_INDEX, FACE_NORMALS, face_for_normal, parse_move
+from solver.search import solve_pieces
 
 
 class CubeSolver:
@@ -21,6 +22,11 @@ class CubeSolver:
         self.cube = cube
         self.renderer = renderer
         self.solving = False
+        # Quando True (padrão), os movimentos são animados via a fila do
+        # Renderer. Testes automatizados podem definir como False para
+        # aplicar os movimentos instantaneamente, sem precisar de um loop
+        # de renderização rodando.
+        self.animated = True
 
     def get_cubie(self, x, y, z):
         """Retorna o cubinho na posição lógica (x,y,z) ou None."""
@@ -88,9 +94,12 @@ class CubeSolver:
     # construção usado pelos métodos de solução por camadas (Layer-by-Layer).
     # ---------------------------------------------------------------
     def move(self, notation):
-        axis, index, angle = parse_move(notation)
-        self.renderer.move_queue.append((notation, axis, index, angle))
-        self.wait_for_queue()
+        if self.animated:
+            axis, index, angle = parse_move(notation)
+            self.renderer.move_queue.append((notation, axis, index, angle))
+            self.wait_for_queue()
+        else:
+            self.cube.apply_move_instant(notation)
 
     def moves(self, notations):
         """Executa uma sequência de movimentos em notação padrão, em ordem."""
@@ -98,10 +107,69 @@ class CubeSolver:
             self.move(notation)
 
     # ---------------------------------------------------------------
-    # Placeholders do método de camadas (a implementar no futuro)
+    # Método de camadas (Layer-by-Layer). Fase 1 (cruz) implementada;
+    # as demais fases (2-7) seguem como placeholders.
     # ---------------------------------------------------------------
+    # Ordem das faces laterais ao redor da face inferior. A ordem em si não
+    # importa para a corretude (cada aresta é buscada de forma independente
+    # e as anteriores entram como restrição no objetivo), mas seguir a volta
+    # do cubo evita cruzamentos de busca desnecessários.
+    CROSS_SIDE_FACES = ("front", "right", "back", "left")
+
     def solve_layer1_cross(self):
-        print("Etapa 1: Cruz branca - placeholder (não implementado).")
+        """
+        Resolve a cruz da primeira camada (a face inferior, cor lida via
+        `get_center_color`, já que os centros nunca mudam de posição).
+
+        Para cada uma das 4 arestas da cruz, usa uma busca (BFS, ver
+        `solver/search.py`) que trata as arestas JÁ posicionadas como
+        restrições do objetivo (devem permanecer no lugar) e busca a
+        sequência de movimentos mais curta que também posiciona a próxima
+        aresta corretamente. Isso evita ter que derivar manualmente cada
+        caso de posição/orientação (fatiamento em camadas do cubo).
+        """
+        bottom_axis, bottom_index = FACE_AXIS_INDEX["bottom"]
+        bottom_color = self.get_center_color("bottom")
+
+        placed = []  # cada item: {"cubie", "target_pos", "local_normal"}
+
+        for side_face in self.CROSS_SIDE_FACES:
+            side_color = self.get_center_color(side_face)
+            cubie = self.get_edge_cubie(bottom_color, side_color)
+
+            side_axis, side_index = FACE_AXIS_INDEX[side_face]
+            target_pos = [0, 0, 0]
+            target_pos[bottom_axis] = bottom_index
+            target_pos[side_axis] = side_index
+
+            home_face = next(face for face, color in cubie.stickers.items() if color == bottom_color)
+
+            placed.append({
+                "cubie": cubie,
+                "target_pos": tuple(target_pos),
+                "local_normal": FACE_NORMALS[home_face],
+            })
+
+            def goal_fn(states, placed=placed):
+                for (position, orientation), info in zip(states, placed):
+                    if position != info["target_pos"]:
+                        return False
+                    rotated_normal = orientation.transform_vector(info["local_normal"])
+                    if face_for_normal(rotated_normal) != "bottom":
+                        return False
+                return True
+
+            current_state = [
+                (tuple(info["cubie"].logical_position), info["cubie"].orientation)
+                for info in placed
+            ]
+
+            solution = solve_pieces(current_state, goal_fn)
+            if solution is None:
+                print(f"AVISO: não encontrei uma sequência para posicionar a aresta da cruz em '{side_face}'.")
+                continue
+
+            self.moves(solution)
 
     def solve_layer1_corners(self):
         print("Etapa 2: Cantos da primeira camada - placeholder (não implementado).")

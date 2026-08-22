@@ -88,3 +88,19 @@ class Matrix3:
             self.data[0][2], self.data[1][2], self.data[2][2], 0,
             0, 0, 0, 1,
         ]
+
+
+def rotation_matrix_for_axis(axis, angle_deg):
+    """
+    Constrói a matriz de rotação para o eixo (0=x, 1=y, 2=z) e ângulo dados.
+
+    Única fonte de verdade para "qual função de rotação usar para qual eixo",
+    usada tanto por `Cube` (animação/estado permanente) quanto pela busca do
+    solver (cube/solver/search.py), que simula movimentos sem depender de Cube.
+    """
+    if axis == 0:
+        return Matrix3.rotation_x(angle_deg)
+    elif axis == 1:
+        return Matrix3.rotation_y(angle_deg)
+    else:
+        return Matrix3.rotation_z(angle_deg)

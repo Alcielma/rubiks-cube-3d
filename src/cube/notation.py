@@ -28,6 +28,26 @@ FACE_AXIS_INDEX = {
     "back": (2, -1),
 }
 
+# Vetor normal (local OU global, é a mesma convenção) de cada face. Usado por
+# Cubie.get_global_colors e pela busca do solver (solver/search.py) para
+# descobrir "para onde aponta" um adesivo depois de aplicar uma orientação.
+FACE_NORMALS = {
+    "front": (0, 0, 1),
+    "back": (0, 0, -1),
+    "left": (-1, 0, 0),
+    "right": (1, 0, 0),
+    "top": (0, 1, 0),
+    "bottom": (0, -1, 0),
+}
+
+NORMAL_TO_FACE = {normal: face for face, normal in FACE_NORMALS.items()}
+
+
+def face_for_normal(vector):
+    """Retorna o nome da face global ('front', 'top', ...) para um vetor normal (arredondado para inteiros)."""
+    return NORMAL_TO_FACE.get(tuple(round(v) for v in vector))
+
+
 BASE_ANGLE = 90
 
 

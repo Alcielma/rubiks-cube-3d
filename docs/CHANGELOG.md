@@ -1,0 +1,94 @@
+# Changelog
+
+Tracks all changes made as part of the general-purpose solver effort (see
+`docs/SOLVER_PLAN.md` for the phased plan this follows). Newest first.
+
+## Phase 1 — Bottom cross (2026-08-22)
+
+**Goal:** implement the first real solving stage — the bottom-layer cross —
+replacing its placeholder in `solver.py`.
+
+### Added
+- `src/solver/search.py`: a small generic breadth-first search (BFS) over a
+  handful of cube pieces. Each layer-by-layer phase describes only the
+  *initial state* of the pieces it cares about and a goal condition;
+  `solve_pieces()` finds the shortest move sequence that satisfies it. This
+  replaces hand-derived case tables (error-prone — see the Phase 0 bug
+  below) with a search that's correct by construction.
+- `Cube.notation.FACE_NORMALS` / `NORMAL_TO_FACE` / `face_for_normal()`:
+  shared "which global face does this normal vector point at" lookup, used
+  by both `Cubie.get_global_colors()` and the new search goal-checking.
+- `graphics/matrix.rotation_matrix_for_axis()`: module-level version of the
+  axis→rotation-matrix dispatch, so `solver/search.py` can build rotation
+  matrices without depending on the `Cube` class.
+- `CubeSolver.solve_layer1_cross()`: real implementation. For each of the 4
+  cross edges, runs a BFS whose goal keeps all *previously placed* cross
+  edges fixed while also placing the next one — this is what correctly
+  handles the case where the last edge is hiding in a middle-layer slot
+  that touches two side faces already used by earlier edges (a case a
+  naive "never touch a used face again" heuristic gets wrong; see
+  `docs/SOLVER_PLAN.md`'s "Key risks" section).
+- `CubeSolver.animated` flag (default `True`): when set to `False`
+  (intended for tests), moves apply instantly via `Cube.apply_move_instant`
+  instead of going through the animated `Renderer` queue, so solving logic
+  can be tested headlessly without a running render loop.
+
+### Fixed
+- `Cubie.get_global_colors()` compared a list against tuples
+  (`rotated_normal == (0, 0, 1)` where `rotated_normal` was a `list`), which
+  is always `False` in Python — so this method silently returned all-`None`
+  colors for every cubie, always. This meant the pre-existing
+  `get_edge_cubie()` never actually found anything. Found while wiring up
+  the new `get_corner_cubie`/`get_center_color` helpers in Phase 0, fixed
+  there; documented here since Phase 1's cross-solver is the first thing
+  that actually depends on it working.
+
+### Verified
+- Headless: 1500 random trials (scramble lengths 1/5/20/50/100, 300 each)
+  — cross solved 1500/1500, ~26ms/trial.
+- Live GUI (real `Renderer`, real animation queue): 2/2 scrambled cubes
+  solved the cross correctly, ~2s each with animation.
+- The "hidden behind two used faces" adversarial case is covered
+  statistically by the 1500 randomized trials above (common in scrambles
+  of length ≥ 20) rather than a single hand-built example.
+
+---
+
+## Phase 0 — Foundations (2026-08-22)
+
+**Goal:** give the solver a clean, non-graphics API to read/mutate cube
+state, and a single source of truth for move execution, before adding any
+solving logic on top.
+
+### Added
+- `src/cube/notation.py`: single source of truth for face-letter →
+  `(axis, index)`, with `parse_move()` supporting `R`, `R'`, and `R2`
+  (180° moves — no code path for these existed before this).
+- `CubeSolver.get_corner_cubie(color1, color2, color3)` and
+  `get_center_color(face)`, alongside the pre-existing `get_edge_cubie()`.
+- `CubeSolver.move(notation)` / `moves(notations)`: one generic,
+  notation-driven way to enqueue an animated move and wait for it.
+
+### Changed
+- Deduplicated the rotation-matrix construction and slice-application math
+  that was copy-pasted across `Cube.rotate_face`, `Cube.update`, and
+  `Cube.scramble` into `Cube._rotation_matrix()` / `_apply_slice_rotation()`.
+- `input/controller.py`: replaced six hand-typed `(axis, index)` key
+  handlers (one per face key) with a single `FACE_KEYS` dict + the new
+  notation-driven `Cube.apply_move()`.
+- `solver.py`: replaced twelve near-identical, unused `move_L` /
+  `move_L_prime` / ... helpers with the single generic `move()` above.
+
+### Fixed
+- `Cubie.get_global_colors()` list-vs-tuple comparison bug (see Phase 1
+  section above for the full explanation — found and fixed in this phase).
+
+### Verified
+- Headless: 2000 random trials of the existing scramble-history-reversal
+  solve path still land on a solved cube after the refactor (regression).
+- Notation math: `R2 == R,R`; a 12-move sequence mixing bases, primes, and
+  doubles round-trips back to solved via its literal inverse.
+- `get_edge_cubie` / `get_corner_cubie` / `get_center_color` return correct
+  results (previously silently broken by the bug above).
+- Live GUI: manual moves through the refactored key path, a real animated
+  180° move, and 3 repeated scramble→solve (`S`/`K`) cycles all end solved.
