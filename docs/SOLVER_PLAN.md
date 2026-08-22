@@ -1,9 +1,10 @@
 # Development Plan: General-Purpose Cube Solver
 
-> **Status:** Phases 0-2 (foundations, bottom cross, first-layer corners)
-> are done. See `docs/CHANGELOG.md` for what actually changed in each
-> phase, verified results, and any bugs found along the way. This file
-> stays a plan of record; the changelog is the detailed history.
+> **Status:** Phases 0-3 (foundations, bottom cross, first-layer corners,
+> second-layer edges) are done. See `docs/CHANGELOG.md` for what actually
+> changed in each phase, verified results, and any bugs found along the
+> way. This file stays a plan of record; the changelog is the detailed
+> history.
 
 ## Problem statement
 
@@ -100,12 +101,27 @@ updates logical state correctly; existing headless consistency tests
   full first layer (cross + corners) solved 1500/1500, ~84ms/trial. Live
   GUI run confirmed the animated path too. See `docs/CHANGELOG.md`.
 
-## Phase 3 — Second layer edges (F2L)
+## Phase 3 — Second layer edges (F2L) — ✅ done
 
-- Implement `solve_layer2`: locate the 4 edges with no top/bottom color,
-  insert each into its slot via the standard left-insert/right-insert
-  algorithms (using `U` setup), without disturbing layers 1.
-- **Test:** first two layers fully solved from ~500 random states.
+- Implemented `solve_layer2` with the same constraint-BFS technique as
+  Phases 1-2 (no hand-derived left-insert/right-insert case tables
+  needed): the 4 middle-layer edges (no top/bottom color) are placed one
+  at a time, with the entire first layer (cross + corners) included as
+  fixed constraints from the start.
+- Tracking up to 12 pieces jointly (8 from the first layer + 4 F2L edges)
+  exposed a second performance cliff even with Phase 2's bidirectional
+  BFS: ~7-10s per cube, because simulating Matrix3 floating-point
+  rotations for that many pieces per search node adds up over the states
+  a bidirectional search still has to expand. Fixed by precomputing a
+  move-effect lookup table: every orientation reachable by a cube piece is
+  one of exactly 24 elements of the cube's rotation group, so each piece
+  is represented during search as (position, orientation-id 0-23) and
+  applying a move becomes a single dict lookup instead of a matrix
+  multiply. Cut it to ~0.5s per cube (plus a smaller general win from
+  unrolling `Matrix3.multiply`, used everywhere else in the app too).
+- **Test:** 1500 randomized headless trials (scramble lengths 1-100) —
+  first two layers fully solved 1500/1500, ~158ms/trial. Live GUI run
+  confirmed the animated path too. See `docs/CHANGELOG.md`.
 
 ## Phase 4 — Last layer orientation (2-look OLL)
 

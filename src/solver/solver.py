@@ -107,8 +107,8 @@ class CubeSolver:
             self.move(notation)
 
     # ---------------------------------------------------------------
-    # Método de camadas (Layer-by-Layer). Fases 1-2 implementadas;
-    # as demais fases (3-7) seguem como placeholders.
+    # Método de camadas (Layer-by-Layer). Fases 1-3 implementadas;
+    # as demais fases (4-7) seguem como placeholders.
     # ---------------------------------------------------------------
     # Ordem das faces laterais ao redor da face inferior. A ordem em si não
     # importa para a corretude (cada peça é buscada de forma independente e
@@ -116,9 +116,11 @@ class CubeSolver:
     # do cubo evita cruzamentos de busca desnecessários.
     CROSS_SIDE_FACES = ("front", "right", "back", "left")
 
-    # Pares de faces laterais adjacentes que definem cada um dos 4 cantos da
-    # primeira camada, na mesma ordem/sentido de CROSS_SIDE_FACES.
-    CORNER_SIDE_FACES = (("front", "right"), ("right", "back"), ("back", "left"), ("left", "front"))
+    # Pares de faces laterais adjacentes ao redor do cubo, na mesma ordem/
+    # sentido de CROSS_SIDE_FACES. Define tanto os 4 cantos da primeira
+    # camada (junto com "bottom") quanto as 4 arestas da segunda camada
+    # (F2L, sem cor de topo/base).
+    ADJACENT_SIDE_FACES = (("front", "right"), ("right", "back"), ("back", "left"), ("left", "front"))
 
     @staticmethod
     def _constraint(cubie, target_pos, checks):
@@ -201,7 +203,7 @@ class CubeSolver:
         bottom_color = self.get_center_color("bottom")
 
         constraints = []
-        for face_a, face_b in self.CORNER_SIDE_FACES:
+        for face_a, face_b in self.ADJACENT_SIDE_FACES:
             color_a = self.get_center_color(face_a)
             color_b = self.get_center_color(face_b)
             cubie = self.get_corner_cubie(bottom_color, color_a, color_b)
@@ -223,6 +225,33 @@ class CubeSolver:
                     (FACE_NORMALS[home_face_bottom], "bottom"),
                     (FACE_NORMALS[home_face_a], face_a),
                 ],
+            ))
+        return constraints
+
+    def _middle_edge_constraints(self):
+        """
+        Constrói as constraints das 4 arestas da segunda camada (F2L) a
+        partir do estado ATUAL do cubo. Diferente da cruz e dos cantos,
+        essas arestas não têm cor de topo nem de base — ficam na camada do
+        meio (índice 0 no eixo da face inferior, que é o padrão em `target_pos`).
+        """
+        constraints = []
+        for face_a, face_b in self.ADJACENT_SIDE_FACES:
+            color_a = self.get_center_color(face_a)
+            color_b = self.get_center_color(face_b)
+            cubie = self.get_edge_cubie(color_a, color_b)
+
+            axis_a, index_a = FACE_AXIS_INDEX[face_a]
+            axis_b, index_b = FACE_AXIS_INDEX[face_b]
+            target_pos = [0, 0, 0]
+            target_pos[axis_a] = index_a
+            target_pos[axis_b] = index_b
+            # bottom_axis permanece 0: é exatamente a camada do meio.
+
+            home_face_a = next(face for face, color in cubie.stickers.items() if color == color_a)
+
+            constraints.append(self._constraint(
+                cubie, target_pos, [(FACE_NORMALS[home_face_a], face_a)]
             ))
         return constraints
 
@@ -252,7 +281,17 @@ class CubeSolver:
         )
 
     def solve_layer2(self):
-        print("Etapa 3: Segunda camada - placeholder (não implementado).")
+        """
+        Resolve as 4 arestas da segunda camada (F2L), mantendo a primeira
+        camada (cruz + cantos, já resolvida) intacta. Mesma técnica de
+        busca incremental: a primeira camada inteira entra como restrição
+        fixa desde o início, e cada aresta da segunda camada é buscada sem
+        desfazer nada que já esteja correto.
+        """
+        first_layer_constraints = self._cross_edge_constraints() + self._corner_constraints()
+        self._solve_constraints_incrementally(
+            self._middle_edge_constraints(), already_placed=first_layer_constraints, label="aresta da segunda camada"
+        )
 
     def solve_layer3_cross(self):
         print("Etapa 4: Cruz amarela - placeholder (não implementado).")

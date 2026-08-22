@@ -3,6 +3,67 @@
 Tracks all changes made as part of the general-purpose solver effort (see
 `docs/SOLVER_PLAN.md` for the phased plan this follows). Newest first.
 
+## Phase 3 — Second layer edges / F2L (2026-08-22)
+
+**Goal:** implement `solve_layer2`, completing the first two layers
+without disturbing the first layer from Phases 1-2.
+
+### Added
+- `CubeSolver.ADJACENT_SIDE_FACES`: renamed from `CORNER_SIDE_FACES` — the
+  same 4 adjacent-side-face pairs now define both the first-layer corners
+  and the second-layer edges, so the old corner-only name stopped fitting.
+- `CubeSolver._middle_edge_constraints()`: builds constraints for the 4
+  F2L edges (no top/bottom color — they live at index 0 on the bottom
+  face's axis, i.e. the middle layer).
+- `CubeSolver.solve_layer2()`: real implementation, replacing its
+  placeholder. Seeds the incremental solve with the entire first layer
+  (cross + corners) already "placed", then places each F2L edge in turn —
+  no new machinery needed beyond what Phases 1-2 already built.
+- `solver/search.py`: a precomputed move-effect table
+  (`_move_effect_table`, `_orientation_group`) representing every piece
+  during search as `(position, orientation-id 0-23)` instead of
+  `(position, Matrix3)`. The 24 IDs are the cube's full rotation group,
+  enumerated once at first use by closing the 3 quarter-turn generators;
+  the table maps every `(move, position, orientation-id)` combination
+  (18 × 27 × 24 = 11,664 entries) to its result, computed once. Applying a
+  move during search is now a dict lookup, not a matrix multiply. The
+  public `solve_pieces()`/`home_state()` API is unchanged — pieces still
+  go in and come out as `(position, Matrix3)`; the fast representation is
+  purely an internal detail of the bidirectional search.
+
+### Fixed (performance, not correctness)
+- Tracking up to 12 pieces jointly (8 from the first layer + 4 F2L edges)
+  made Phase 2's bidirectional-but-Matrix3-based search take **~7-10
+  seconds per cube** for the hardest edge — better than Phase 1's naive
+  30s, but still too slow for comfortable use, let alone a large test
+  suite. Root cause: even with bidirectional search halving the exponent,
+  each expanded state still did up to 12 floating-point 3x3 matrix
+  multiplies (`Matrix3.multiply` itself was also using slow nested loops
+  with generator expressions — fixed too, unrolled it by hand, a general
+  win since it's used everywhere in the app, not just the solver).
+  Switching the hot loop to integer `(position, orientation-id)` tuples
+  and dict lookups (see "Added" above) cut it to **~0.5s per cube** —
+  roughly 15-20x faster than the Matrix3-based bidirectional search, and
+  incidentally made Phases 1-2 faster too (cross: 5ms → ~2ms/trial;
+  first layer: 84ms → ~8ms/trial).
+- The debug assertion added in Phase 2 (replay the bidirectional result
+  through the original `goal_fn`) still runs on every solve, using the
+  original Matrix3-based replay — it doesn't touch the fast path, so it
+  keeps validating the new lookup-table code without being a genuine
+  bottleneck itself (runs once per solved piece, not once per search node).
+
+### Verified
+- Headless: 1500 random trials (scramble lengths 1/5/20/50/100, 300 each)
+  — first two layers (cross + corners + F2L edges) solved 1500/1500,
+  ~158ms/trial.
+- Re-ran the Phase 1 and Phase 2 regression suites against the new
+  move-effect-table search — still 1500/1500 each, and faster than before
+  (cross: ~2ms/trial vs. 5ms; first layer: ~8ms/trial vs. 84ms).
+- Live GUI (real `Renderer`, real animation queue): 2/2 scrambled cubes
+  had their first two layers fully solved, ~14s each with animation.
+
+---
+
 ## Phase 2 — First layer corners (2026-08-22)
 
 **Goal:** implement `solve_layer1_corners`, completing the first layer
