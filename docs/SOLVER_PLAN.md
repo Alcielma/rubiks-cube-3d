@@ -1,9 +1,9 @@
 # Development Plan: General-Purpose Cube Solver
 
-> **Status:** Phase 0 (foundations) and Phase 1 (bottom cross) are done.
-> See `docs/CHANGELOG.md` for what actually changed in each phase, verified
-> results, and any bugs found along the way. This file stays a plan of
-> record; the changelog is the detailed history.
+> **Status:** Phases 0-2 (foundations, bottom cross, first-layer corners)
+> are done. See `docs/CHANGELOG.md` for what actually changed in each
+> phase, verified results, and any bugs found along the way. This file
+> stays a plan of record; the changelog is the detailed history.
 
 ## Problem statement
 
@@ -81,13 +81,24 @@ updates logical state correctly; existing headless consistency tests
   solved, ~26ms/trial. Live GUI run confirmed the animated path too. See
   `docs/CHANGELOG.md` for full results.
 
-## Phase 2 — First layer corners
+## Phase 2 — First layer corners — ✅ done
 
-- Implement `solve_layer1_corners`: locate each bottom-color corner, use
-  the standard repeated trigger (e.g. `R U R' U'`) with `U`-layer setup
-  moves to insert it correctly, without disturbing the completed cross.
-- **Test:** bottom face fully solved (cross + corners) from ~500 random
-  states, cross from Phase 1 still intact.
+- Implemented `solve_layer1_corners` using the same BFS-over-constraints
+  technique as Phase 1, generalized: a shared `_constraint()` /
+  `_constraints_satisfied()` / `_solve_constraints_incrementally()` now
+  back both the cross and the corners, rather than duplicating the
+  per-piece search loop. The cross's 4 edges are included as fixed
+  constraints from the start of corner-solving.
+- Tracking 4 cross edges + up to 4 corners jointly (8 pieces) made the
+  original plain BFS from Phase 1 too slow (~30s for one cube). Fixed by
+  adding bidirectional BFS to `solver/search.py`: since the goal for every
+  constraint here is always "piece at its home position, identity
+  orientation" (that's what "correct" means), the goal state is known
+  explicitly, so the search can meet in the middle instead of only
+  searching forward. This took corner-solving from ~30s to ~0.2s per cube.
+- **Test:** 1500 randomized headless trials (scramble lengths 1-100) —
+  full first layer (cross + corners) solved 1500/1500, ~84ms/trial. Live
+  GUI run confirmed the animated path too. See `docs/CHANGELOG.md`.
 
 ## Phase 3 — Second layer edges (F2L)
 

@@ -12,7 +12,7 @@ import time
 
 from cube.colors import BLACK
 from cube.notation import FACE_AXIS_INDEX, FACE_NORMALS, face_for_normal, parse_move
-from solver.search import solve_pieces
+from solver.search import solve_pieces, home_state
 
 
 class CubeSolver:
@@ -107,32 +107,78 @@ class CubeSolver:
             self.move(notation)
 
     # ---------------------------------------------------------------
-    # Método de camadas (Layer-by-Layer). Fase 1 (cruz) implementada;
-    # as demais fases (2-7) seguem como placeholders.
+    # Método de camadas (Layer-by-Layer). Fases 1-2 implementadas;
+    # as demais fases (3-7) seguem como placeholders.
     # ---------------------------------------------------------------
     # Ordem das faces laterais ao redor da face inferior. A ordem em si não
-    # importa para a corretude (cada aresta é buscada de forma independente
-    # e as anteriores entram como restrição no objetivo), mas seguir a volta
+    # importa para a corretude (cada peça é buscada de forma independente e
+    # as anteriores entram como restrição no objetivo), mas seguir a volta
     # do cubo evita cruzamentos de busca desnecessários.
     CROSS_SIDE_FACES = ("front", "right", "back", "left")
 
-    def solve_layer1_cross(self):
-        """
-        Resolve a cruz da primeira camada (a face inferior, cor lida via
-        `get_center_color`, já que os centros nunca mudam de posição).
+    # Pares de faces laterais adjacentes que definem cada um dos 4 cantos da
+    # primeira camada, na mesma ordem/sentido de CROSS_SIDE_FACES.
+    CORNER_SIDE_FACES = (("front", "right"), ("right", "back"), ("back", "left"), ("left", "front"))
 
-        Para cada uma das 4 arestas da cruz, usa uma busca (BFS, ver
-        `solver/search.py`) que trata as arestas JÁ posicionadas como
-        restrições do objetivo (devem permanecer no lugar) e busca a
-        sequência de movimentos mais curta que também posiciona a próxima
-        aresta corretamente. Isso evita ter que derivar manualmente cada
-        caso de posição/orientação (fatiamento em camadas do cubo).
+    @staticmethod
+    def _constraint(cubie, target_pos, checks):
         """
+        Descreve o que significa "essa peça está correta": em qual posição
+        lógica ela deve estar, e quais adesivos (por normal local) devem
+        apontar para qual face global. Uma aresta precisa de 1 checagem
+        (a outra orientação decorre da ortogonalidade); um canto precisa de
+        2 (a terceira face fica implícita).
+        """
+        return {"cubie": cubie, "target_pos": tuple(target_pos), "checks": checks}
+
+    @staticmethod
+    def _constraints_satisfied(states, constraints):
+        """Verifica se um estado simulado (lista de (posição, orientação)) satisfaz todas as constraints, em ordem."""
+        for (position, orientation), info in zip(states, constraints):
+            if position != info["target_pos"]:
+                return False
+            for local_normal, target_face in info["checks"]:
+                rotated_normal = orientation.transform_vector(local_normal)
+                if face_for_normal(rotated_normal) != target_face:
+                    return False
+        return True
+
+    def _current_state(self, constraints):
+        """Lê a posição/orientação REAL atual de cada peça das constraints."""
+        return [
+            (tuple(info["cubie"].logical_position), info["cubie"].orientation)
+            for info in constraints
+        ]
+
+    def _solve_constraints_incrementally(self, constraints, already_placed=(), label="peça"):
+        """
+        Resolve uma lista de constraints uma de cada vez: para cada nova
+        peça, busca (BFS) a sequência de movimentos mais curta que a
+        posiciona corretamente SEM desfazer nenhuma peça já resolvida
+        (as anteriores desta chamada + `already_placed`, ex.: a cruz já
+        pronta ao resolver os cantos).
+        """
+        active = list(already_placed)
+        for i, constraint in enumerate(constraints, start=1):
+            active.append(constraint)
+
+            def goal_fn(states, active=active):
+                return self._constraints_satisfied(states, active)
+
+            goal_state = home_state([info["target_pos"] for info in active])
+            solution = solve_pieces(self._current_state(active), goal_fn, goal_state=goal_state)
+            if solution is None:
+                print(f"AVISO: não encontrei uma sequência para posicionar {label} #{i}.")
+                continue
+
+            self.moves(solution)
+
+    def _cross_edge_constraints(self):
+        """Constrói as constraints das 4 arestas da cruz a partir do estado ATUAL do cubo."""
         bottom_axis, bottom_index = FACE_AXIS_INDEX["bottom"]
         bottom_color = self.get_center_color("bottom")
 
-        placed = []  # cada item: {"cubie", "target_pos", "local_normal"}
-
+        constraints = []
         for side_face in self.CROSS_SIDE_FACES:
             side_color = self.get_center_color(side_face)
             cubie = self.get_edge_cubie(bottom_color, side_color)
@@ -144,35 +190,66 @@ class CubeSolver:
 
             home_face = next(face for face, color in cubie.stickers.items() if color == bottom_color)
 
-            placed.append({
-                "cubie": cubie,
-                "target_pos": tuple(target_pos),
-                "local_normal": FACE_NORMALS[home_face],
-            })
+            constraints.append(self._constraint(
+                cubie, target_pos, [(FACE_NORMALS[home_face], "bottom")]
+            ))
+        return constraints
 
-            def goal_fn(states, placed=placed):
-                for (position, orientation), info in zip(states, placed):
-                    if position != info["target_pos"]:
-                        return False
-                    rotated_normal = orientation.transform_vector(info["local_normal"])
-                    if face_for_normal(rotated_normal) != "bottom":
-                        return False
-                return True
+    def _corner_constraints(self):
+        """Constrói as constraints dos 4 cantos da primeira camada a partir do estado ATUAL do cubo."""
+        bottom_axis, bottom_index = FACE_AXIS_INDEX["bottom"]
+        bottom_color = self.get_center_color("bottom")
 
-            current_state = [
-                (tuple(info["cubie"].logical_position), info["cubie"].orientation)
-                for info in placed
-            ]
+        constraints = []
+        for face_a, face_b in self.CORNER_SIDE_FACES:
+            color_a = self.get_center_color(face_a)
+            color_b = self.get_center_color(face_b)
+            cubie = self.get_corner_cubie(bottom_color, color_a, color_b)
 
-            solution = solve_pieces(current_state, goal_fn)
-            if solution is None:
-                print(f"AVISO: não encontrei uma sequência para posicionar a aresta da cruz em '{side_face}'.")
-                continue
+            axis_a, index_a = FACE_AXIS_INDEX[face_a]
+            axis_b, index_b = FACE_AXIS_INDEX[face_b]
+            target_pos = [0, 0, 0]
+            target_pos[bottom_axis] = bottom_index
+            target_pos[axis_a] = index_a
+            target_pos[axis_b] = index_b
 
-            self.moves(solution)
+            home_face_bottom = next(face for face, color in cubie.stickers.items() if color == bottom_color)
+            home_face_a = next(face for face, color in cubie.stickers.items() if color == color_a)
+
+            constraints.append(self._constraint(
+                cubie,
+                target_pos,
+                [
+                    (FACE_NORMALS[home_face_bottom], "bottom"),
+                    (FACE_NORMALS[home_face_a], face_a),
+                ],
+            ))
+        return constraints
+
+    def solve_layer1_cross(self):
+        """
+        Resolve a cruz da primeira camada (a face inferior, cor lida via
+        `get_center_color`, já que os centros nunca mudam de posição).
+
+        Para cada uma das 4 arestas, usa uma busca (BFS, ver
+        `solver/search.py`) que trata as arestas JÁ posicionadas como
+        restrições do objetivo e busca a sequência de movimentos mais curta
+        que também posiciona a próxima corretamente. Isso evita ter que
+        derivar manualmente cada caso de posição/orientação.
+        """
+        self._solve_constraints_incrementally(self._cross_edge_constraints(), label="aresta da cruz")
 
     def solve_layer1_corners(self):
-        print("Etapa 2: Cantos da primeira camada - placeholder (não implementado).")
+        """
+        Resolve os 4 cantos da primeira camada, mantendo a cruz (já
+        resolvida) intacta. Mesma técnica de busca incremental da cruz: a
+        cruz inteira entra como restrição fixa desde o início, e cada canto
+        é buscado sem desfazer nem a cruz nem os cantos já posicionados.
+        """
+        cross_constraints = self._cross_edge_constraints()
+        self._solve_constraints_incrementally(
+            self._corner_constraints(), already_placed=cross_constraints, label="canto da primeira camada"
+        )
 
     def solve_layer2(self):
         print("Etapa 3: Segunda camada - placeholder (não implementado).")

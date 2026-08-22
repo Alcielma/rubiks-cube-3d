@@ -3,6 +3,62 @@
 Tracks all changes made as part of the general-purpose solver effort (see
 `docs/SOLVER_PLAN.md` for the phased plan this follows). Newest first.
 
+## Phase 2 — First layer corners (2026-08-22)
+
+**Goal:** implement `solve_layer1_corners`, completing the first layer
+(cross + corners) without disturbing the cross from Phase 1.
+
+### Added
+- `CubeSolver._constraint()` / `_constraints_satisfied()` /
+  `_current_state()` / `_solve_constraints_incrementally()`: generalized
+  the per-piece "search for a move sequence that places this piece without
+  disturbing previously-placed ones" pattern from Phase 1's cross-only
+  code into something both `solve_layer1_cross` and the new
+  `solve_layer1_corners` call. A constraint now carries a list of
+  `(local_normal, target_face)` checks instead of a single one — an edge
+  needs 1 (the other orientation follows from orthogonality), a corner
+  needs 2 (the third face is then implied).
+- `CubeSolver._cross_edge_constraints()` / `_corner_constraints()`: build
+  the constraint list for each piece type from the cube's *current* state
+  (colors read via `get_center_color`, pieces via `get_edge_cubie` /
+  `get_corner_cubie`).
+- `CubeSolver.CORNER_SIDE_FACES`: the 4 adjacent side-face pairs that
+  define each first-layer corner slot.
+- `CubeSolver.solve_layer1_corners()`: real implementation, replacing its
+  placeholder. Seeds the incremental solve with all 4 cross constraints
+  already "placed" (fixed), then places each corner in turn.
+- `solver/search.py`: bidirectional BFS (`_bidirectional_bfs`, `home_state()`,
+  `_inverse_notation()`). Necessary, not optional — see "Fixed" below.
+
+### Fixed (performance, not correctness)
+- Tracking 8 pieces jointly (4 cross edges + 4 corners) with Phase 1's
+  plain forward BFS took **~30 seconds for a single cube** — the state
+  space explodes because 8-piece combined states rarely collide, so
+  visited-set pruning (which made the 4-edge cross fast) barely helps.
+  Fixed by recognizing that every constraint's goal is always "piece at
+  its own creation position, identity orientation" — literally the
+  definition of solved for that piece — so the exact goal state is known
+  upfront (`home_state()`) and the search can run bidirectionally (meet in
+  the middle: explore forward from the start AND backward from the goal
+  using inverse moves, stopping when the two frontiers intersect). This
+  turns a `moves^depth` search into roughly `2 × moves^(depth/2)` and cut
+  corner-solving from ~30s to ~0.2s per cube. `solve_pieces()` keeps its
+  original unidirectional path as a fallback for any future goal that
+  doesn't reduce to a single known state, and a debug assertion replays
+  every bidirectional result through the original `goal_fn` to catch a
+  wrong result from this trickier code path.
+
+### Verified
+- Headless: 1500 random trials (scramble lengths 1/5/20/50/100, 300 each)
+  — full first layer (cross + corners) solved 1500/1500, ~84ms/trial.
+- Live GUI (real `Renderer`, real animation queue): 2/2 scrambled cubes
+  had their first layer fully solved, ~6-7s each with animation.
+- Re-ran the Phase 1 cross-only regression suite (1500 trials) against the
+  new bidirectional search — still 1500/1500, and incidentally faster too
+  (5ms/trial vs. the original 26ms/trial).
+
+---
+
 ## Phase 1 — Bottom cross (2026-08-22)
 
 **Goal:** implement the first real solving stage — the bottom-layer cross —
