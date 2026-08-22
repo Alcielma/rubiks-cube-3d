@@ -10,7 +10,8 @@ como métodos placeholder para eventuais implementações futuras.
 """
 import time
 
-from cube.colors import WHITE, YELLOW, BLUE, GREEN, RED, ORANGE
+from cube.colors import WHITE, YELLOW, BLUE, GREEN, RED, ORANGE, BLACK
+from cube.notation import FACE_AXIS_INDEX, parse_move
 
 
 class CubeSolver:
@@ -40,9 +41,40 @@ class CubeSolver:
                 continue
 
             global_colors = cubie.get_global_colors()
-            visible_colors = [c for c in global_colors.values() if c is not None and c != (0, 0, 0)]
+            visible_colors = [c for c in global_colors.values() if c is not None and c != BLACK]
             if color1 in visible_colors and color2 in visible_colors:
                 return cubie
+        return None
+
+    def get_corner_cubie(self, color1, color2, color3):
+        """
+        Retorna o cubinho de canto (as três coordenadas lógicas não-zero) que
+        possui as três cores fornecidas visíveis. Útil para o método de camadas.
+        """
+        target = {color1, color2, color3}
+        for cubie in self.cube.cubies:
+            pos = cubie.logical_position
+            if any(p == 0 for p in pos):
+                continue
+
+            global_colors = cubie.get_global_colors()
+            visible_colors = {c for c in global_colors.values() if c is not None and c != BLACK}
+            if target <= visible_colors:
+                return cubie
+        return None
+
+    def get_center_color(self, face):
+        """
+        Retorna a cor fixa de uma face ('front', 'back', 'left', 'right',
+        'top' ou 'bottom'), lida a partir do cubinho central correspondente.
+        Como os centros nunca mudam de posição, essa é a referência confiável
+        de "qual cor pertence a essa face" durante a solução.
+        """
+        axis, index = FACE_AXIS_INDEX[face]
+        for cubie in self.cube.cubies:
+            pos = cubie.logical_position
+            if pos[axis] == index and all(pos[a] == 0 for a in range(3) if a != axis):
+                return cubie.get_global_colors()[face]
         return None
 
     def wait_for_queue(self):
@@ -51,56 +83,19 @@ class CubeSolver:
             time.sleep(0.01)
 
     # ---------------------------------------------------------------
-    # Movimentos básicos (notação WCA). Cada um enfileira o movimento
-    # e espera o término da animação antes de seguir.
+    # Movimento básico (notação padrão, ex.: "R", "U'", "F2"). Enfileira o
+    # movimento e espera o término da animação antes de seguir. Bloco de
+    # construção usado pelos métodos de solução por camadas (Layer-by-Layer).
     # ---------------------------------------------------------------
-    def move_L(self):
-        self.renderer.move_queue.append(("L", 0, -1, 90))
+    def move(self, notation):
+        axis, index, angle = parse_move(notation)
+        self.renderer.move_queue.append((notation, axis, index, angle))
         self.wait_for_queue()
 
-    def move_L_prime(self):
-        self.renderer.move_queue.append(("L'", 0, -1, -90))
-        self.wait_for_queue()
-
-    def move_R(self):
-        self.renderer.move_queue.append(("R", 0, 1, 90))
-        self.wait_for_queue()
-
-    def move_R_prime(self):
-        self.renderer.move_queue.append(("R'", 0, 1, -90))
-        self.wait_for_queue()
-
-    def move_U(self):
-        self.renderer.move_queue.append(("U", 1, 1, 90))
-        self.wait_for_queue()
-
-    def move_U_prime(self):
-        self.renderer.move_queue.append(("U'", 1, 1, -90))
-        self.wait_for_queue()
-
-    def move_D(self):
-        self.renderer.move_queue.append(("D", 1, -1, 90))
-        self.wait_for_queue()
-
-    def move_D_prime(self):
-        self.renderer.move_queue.append(("D'", 1, -1, -90))
-        self.wait_for_queue()
-
-    def move_F(self):
-        self.renderer.move_queue.append(("F", 2, 1, 90))
-        self.wait_for_queue()
-
-    def move_F_prime(self):
-        self.renderer.move_queue.append(("F'", 2, 1, -90))
-        self.wait_for_queue()
-
-    def move_B(self):
-        self.renderer.move_queue.append(("B", 2, -1, 90))
-        self.wait_for_queue()
-
-    def move_B_prime(self):
-        self.renderer.move_queue.append(("B'", 2, -1, -90))
-        self.wait_for_queue()
+    def moves(self, notations):
+        """Executa uma sequência de movimentos em notação padrão, em ordem."""
+        for notation in notations:
+            self.move(notation)
 
     # ---------------------------------------------------------------
     # Placeholders do método de camadas (a implementar no futuro)

@@ -149,7 +149,7 @@ class Cubie:
 
         for local_face, normal in local_normals.items():
             rotated_normal = self.orientation.transform_vector(normal)
-            rotated_normal = [round(x) for x in rotated_normal]
+            rotated_normal = tuple(round(x) for x in rotated_normal)
 
             if rotated_normal == (0, 0, 1):
                 global_face = "front"

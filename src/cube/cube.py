@@ -6,6 +6,7 @@ e a funcionalidade de embaralhamento (com histórico para desfazer depois).
 import random
 
 from cube.cubie import Cubie
+from cube.notation import parse_move
 from graphics.matrix import Matrix3
 
 
@@ -47,13 +48,32 @@ class Cube:
         for cubie in self.cubies:
             cubie.draw()
 
+    @staticmethod
+    def _rotation_matrix(axis, angle):
+        """Constrói a matriz de rotação para o eixo (0=x, 1=y, 2=z) e ângulo dados."""
+        if axis == 0:
+            return Matrix3.rotation_x(angle)
+        elif axis == 1:
+            return Matrix3.rotation_y(angle)
+        else:
+            return Matrix3.rotation_z(angle)
+
+    def _apply_slice_rotation(self, axis, index, matrix):
+        """Aplica permanentemente uma matriz de rotação a todos os cubinhos da fatia (axis, index)."""
+        for cubie in self.cubies:
+            if cubie.logical_position[axis] == index:
+                new_pos = matrix.transform_vector(cubie.logical_position)
+                cubie.logical_position = [round(x) for x in new_pos]
+                cubie.orientation = matrix.multiply(cubie.orientation)
+                cubie.reset_animation()
+
     def rotate_face(self, axis, index, angle):
         """
         Inicia a animação de rotação de uma face do cubo.
 
         :param axis: Eixo da rotação (0 = x, 1 = y, 2 = z)
         :param index: Qual face do eixo (-1 ou 1)
-        :param angle: Ângulo de rotação (normalmente 90 ou -90 graus)
+        :param angle: Ângulo de rotação (90, -90 ou 180 graus)
         """
         if self.animating:
             return
@@ -62,13 +82,18 @@ class Cube:
         self.animation_index = index
         self.animation_target_angle = angle
         self.animation_current_angle = 0
+        self.animation_matrix = self._rotation_matrix(axis, angle)
 
-        if axis == 0:
-            self.animation_matrix = Matrix3.rotation_x(angle)
-        elif axis == 1:
-            self.animation_matrix = Matrix3.rotation_y(angle)
-        else:
-            self.animation_matrix = Matrix3.rotation_z(angle)
+    def apply_move(self, notation):
+        """Inicia a animação de um movimento em notação padrão (ex.: "R", "U'", "F2")."""
+        axis, index, angle = parse_move(notation)
+        self.rotate_face(axis, index, angle)
+
+    def apply_move_instant(self, notation):
+        """Aplica um movimento em notação padrão imediatamente, sem animação."""
+        axis, index, angle = parse_move(notation)
+        matrix = self._rotation_matrix(axis, angle)
+        self._apply_slice_rotation(axis, index, matrix)
 
     def update(self, dt):
         """
@@ -88,24 +113,14 @@ class Cube:
 
         self.animation_current_angle += step
 
-        if self.animation_axis == 0:
-            current_matrix = Matrix3.rotation_x(step)
-        elif self.animation_axis == 1:
-            current_matrix = Matrix3.rotation_y(step)
-        else:
-            current_matrix = Matrix3.rotation_z(step)
+        current_matrix = self._rotation_matrix(self.animation_axis, step)
 
         for cubie in self.cubies:
             if cubie.logical_position[self.animation_axis] == self.animation_index:
                 cubie.animate_rotate(current_matrix, self.animation_axis, self.animation_index)
 
         if abs(self.animation_current_angle - self.animation_target_angle) < 0.01:
-            for cubie in self.cubies:
-                if cubie.logical_position[self.animation_axis] == self.animation_index:
-                    new_pos = self.animation_matrix.transform_vector(cubie.logical_position)
-                    cubie.logical_position = [round(x) for x in new_pos]
-                    cubie.orientation = self.animation_matrix.multiply(cubie.orientation)
-                    cubie.reset_animation()
+            self._apply_slice_rotation(self.animation_axis, self.animation_index, self.animation_matrix)
             self.animating = False
 
     def scramble(self, moves=20):
@@ -128,16 +143,5 @@ class Cube:
             # Registra o movimento para poder desfazer depois
             self.scramble_history.append((axis, index, angle))
 
-            if axis == 0:
-                matrix = Matrix3.rotation_x(angle)
-            elif axis == 1:
-                matrix = Matrix3.rotation_y(angle)
-            else:
-                matrix = Matrix3.rotation_z(angle)
-
-            for cubie in self.cubies:
-                if cubie.logical_position[axis] == index:
-                    new_pos = matrix.transform_vector(cubie.logical_position)
-                    cubie.logical_position = [round(x) for x in new_pos]
-                    cubie.orientation = matrix.multiply(cubie.orientation)
-                    cubie.reset_animation()
+            matrix = self._rotation_matrix(axis, angle)
+            self._apply_slice_rotation(axis, index, matrix)

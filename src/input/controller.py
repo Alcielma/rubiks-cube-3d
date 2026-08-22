@@ -10,6 +10,16 @@ import threading
 import pygame
 from pygame.locals import *
 
+# Mapeia cada tecla de face para sua letra de notação padrão (ver cube/notation.py).
+FACE_KEYS = {
+    K_l: "L",
+    K_r: "R",
+    K_u: "U",
+    K_d: "D",
+    K_f: "F",
+    K_b: "B",
+}
+
 
 class InputHandler:
     """Handler único de eventos de entrada. É alimentado pelo loop principal."""
@@ -61,18 +71,9 @@ class InputHandler:
             mod = pygame.key.get_mods()
             shift_pressed = mod & KMOD_SHIFT
 
-            if event.key == K_l:
-                cube.rotate_face(0, -1, 90 if not shift_pressed else -90)
-            if event.key == K_r:
-                cube.rotate_face(0, 1, 90 if not shift_pressed else -90)
-            if event.key == K_u:
-                cube.rotate_face(1, 1, 90 if not shift_pressed else -90)
-            if event.key == K_d:
-                cube.rotate_face(1, -1, 90 if not shift_pressed else -90)
-            if event.key == K_f:
-                cube.rotate_face(2, 1, 90 if not shift_pressed else -90)
-            if event.key == K_b:
-                cube.rotate_face(2, -1, 90 if not shift_pressed else -90)
+            if event.key in FACE_KEYS:
+                notation = FACE_KEYS[event.key] + ("'" if shift_pressed else "")
+                cube.apply_move(notation)
             if event.key == K_s:
                 cube.scramble()
             if event.key == K_k:
