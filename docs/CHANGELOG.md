@@ -3,6 +3,149 @@
 Tracks all changes made as part of the general-purpose solver effort (see
 `docs/SOLVER_PLAN.md` for the phased plan this follows). Newest first.
 
+## Phase 4 — Last layer orientation / 2-look OLL (2026-08-22)
+
+**Goal:** implement `solve_layer3_cross` (orient the 4 top edges) and
+`solve_layer3_orient_corners` (orient the 4 top corners) — the whole top
+face becomes one color, permutation left for Phase 5.
+
+This phase took much longer than Phases 1-3 and surfaced two real bugs and
+one fundamental algorithmic dead-end, documented in full below because the
+detours are as informative as the final design.
+
+### Added
+- Generalized `CubeSolver._constraint()` to accept a *set* of acceptable
+  target positions, not just one — needed because OLL doesn't care which
+  of the 4 top slots a piece ends up in, only its orientation.
+- `CubeSolver._solve_constraints_together()`: solves a group of
+  constraints in one joint search, as opposed to
+  `_solve_constraints_incrementally()`'s one-at-a-time approach. Required
+  because orientation has a parity invariant (edge-flip sum is always
+  even, corner-twist sum is always ≡0 mod 3) — fixing one piece while
+  holding everything else *exactly* fixed can be provably impossible even
+  when fixing several together is possible.
+- `resolve_in_place_orientation()` and `_piece_orbit()` in
+  `solver/search.py`: given a piece's current state, find the one
+  orientation it would need at some (possibly different) position to
+  satisfy an arbitrary predicate, by flood-filling that single piece's
+  full 24-state orbit (12 positions × 2 orientations for an edge, 8 × 3
+  for a corner) — no hand-derived flip/twist geometry needed. This is
+  what lets a *flexible* goal (OLL: any top slot) still reduce to one
+  concrete state, so the fast bidirectional search from Phase 2 still
+  applies instead of falling back to a slow unidirectional one.
+- **Adaptive face-set expansion** (`CubeSolver.FACE_EXPANSION_STAGES`,
+  `_moves_for_faces()`, `_constraint_touches_faces()`, rewritten
+  `_solve_group()`): tries `{U,R}` first, then `{U,R,F}`, then adding `L`,
+  then `B` — restricting both the allowed moves *and* which already-placed
+  F2L pieces even need tracking (a piece whose home slot's axis is never
+  touched by the active faces provably can't move, so it's dropped from
+  the search state entirely). Necessary because by Phase 4 the joint
+  piece count reaches ~20 (both full layers + all 4 top edges), and a
+  handful of OLL cases only became findable at all once branching and
+  piece count were both cut down for the common case.
+- `CubeSolver._make_orientation_progress()` +
+  `PROGRESS_STAGE_DEPTHS`: for corner orientation specifically, instead of
+  one joint search for "all 4 correct", repeatedly searches (shallow,
+  cheap) for "at least one more correct than now", applies it, and
+  repeats — mirroring how real "2-look OLL" is executed (a short trigger,
+  applied repeatedly with `U` adjustments). The trigger the search finds
+  on its own for the common case (`{U,R}`, one corner already correct) is
+  the classical **Sune** (`R U R' U R U2 R'`) — the search rediscovered a
+  famous named algorithm from first principles, which is a nice sanity
+  check on the whole approach.
+- Guaranteed fallback in `solve_layer3_orient_corners()`: when even the
+  shallow "+1" search finds nothing (see "Fixed" below for why that's
+  sometimes mathematically expected, not a bug), falls back to
+  `_solve_constraints_together()` with a deeper budget (`max_depth=14`)
+  for that round only. Bounds the worst case instead of leaving it
+  unbounded.
+
+### Fixed
+1. **Face-exclusion bug** (correctness): the first version of adaptive
+   face-set filtering excluded a piece from tracking whenever its target
+   position didn't touch the trial's active faces — but this check was
+   also applied to the piece(s) *currently being solved*, not just
+   already-placed ones. A piece not yet in place has no fixed "current
+   position" to check against its target, so it could be wrongly excluded
+   from the whole problem, making the search trivially "succeed" with an
+   empty move list while never actually placing that piece. Silent
+   corruption: `solve_layer1_cross` (Phase 1!) started leaving edges
+   unplaced once face-expansion was added, only caught because the Phase
+   1 regression suite was re-run after the change (a reminder to always
+   re-run existing regressions after touching shared code, not just the
+   new phase's tests). Fixed by splitting `_solve_group()`'s single
+   `active` list into `new_constraints` (always included, unconditionally)
+   and `already_placed` (the only list eligible for exclusion).
+2. **`allowed_moves` silently ignored in the unidirectional search
+   path** (performance, not correctness — but severe): `_unidirectional_bfs()`
+   always used all 18 moves internally regardless of what `solve_pieces()`
+   was asked to restrict to. Corner-orientation "progress" searches that
+   were supposed to explore only 6 moves (`{U,R}`) were actually exploring
+   all 18, turning a sub-second search into one taking 13-38+ seconds
+   (confirmed by explicit timing: identical run times whether `max_depth`
+   was 4, 6, or 8 — a dead giveaway the depth parameter wasn't the actual
+   bottleneck). Fixed by threading the restricted move list all the way
+   into `_unidirectional_bfs()`.
+3. **Depth-6 was one move too shallow for the "+1 progress" search's
+   cheapest stage** — Sune itself is 7 moves; capping at 6 made even the
+   *findable* common case fail and fall through to more expensive stages
+   for no reason. Raised the cheapest stage's depth to 9 once the
+   `allowed_moves` bug above made that affordable again.
+4. **Understood, not "fixed" — a dead end worth recording**: profiling why
+   corner orientation sometimes took 30-60+ seconds even after fix #2
+   led to discovering that going from "2 corners correctly oriented" to
+   "3 correctly oriented" is *impossible*, not just hard: with 2 corners
+   already at twist 0, the invariant (total corner twist ≡ 0 mod 3 across
+   all 8 corners) forces the other 2's twists to sum to 0 mod 3, which for
+   two nonzero values in {1, 2} only happens as 1+2 — meaning fixing
+   either one alone would leave the other at a nonzero twist that can't
+   satisfy the invariant by itself. The only reachable next milestone from
+   "2 correct" is "4 correct" (both remaining corners at once), never "3
+   correct". A shallow "find +1" search was, correctly, finding nothing —
+   it was asking for something that doesn't exist, at any depth. This is
+   *why* the guaranteed fallback (item above) exists — not a performance
+   knob, a correctness necessity for this specific transition.
+5. **Real solve failures at scramble length ≥20** (correctness): the
+   guaranteed-fallback fix above was applied only to
+   `solve_layer3_orient_corners` at first. `solve_layer3_cross` (edges)
+   still called `_solve_constraints_together()` alone with the default
+   `max_depth=10` — but edge-flip parity has the exact same "can't fix
+   exactly one" dead end as corner twist (flip sum is always even, so
+   "exactly 1 or 3 corrected" can be unreachable), and a first full Phase
+   1-4 test run caught it printing "AVISO: não encontrei uma sequência
+   para resolver orientação das arestas..." and genuinely leaving the
+   cube unsolved for some harder scrambles. Fixed by extracting the whole
+   progress-search-with-guaranteed-fallback strategy into one shared
+   `_solve_orientation()` used by both `solve_layer3_cross` and
+   `solve_layer3_orient_corners`, instead of only the corners method
+   having it.
+
+### Verified
+- Headless: after fix #5, a full regression pass across all four phases —
+  Phase 1 (1500 trials), Phase 2 (1500 trials), Phase 3 (150 trials, all
+  reduced-count reruns to confirm no regression from Phase 4's changes to
+  shared code) and Phase 4 itself (100 trials: 20 × scramble lengths
+  1/5/20/50/100) — all passed with **zero failures**. Phase 4's 100-trial
+  run (the one that includes the harder lengths that previously failed
+  under fix #5) took 840.8s total, ~8.4s/trial average, dominated by the
+  guaranteed-fallback path on the harder cases.
+- Live GUI (real `Renderer`, real animation queue): 2/2 scrambled cubes
+  had cross + corners + F2L + full OLL correctly solved, ~30-40s each
+  (animation time included, plus at least one guaranteed-fallback round).
+- Correctness spot-check: after a full Phase 1-4 solve, cross/corners/F2L
+  positions and OLL edges/corners orientations all verified directly
+  against the cube's real sticker colors (not just re-deriving from the
+  same constraint objects used to solve).
+- Performance: the common case (most scrambles, most rounds within a
+  scramble) resolves in well under a second; the guaranteed-fallback path
+  (necessary, not a bug — see item 4) is bounded at ~30s per triggering
+  round rather than unbounded, and triggers on a meaningful minority of
+  cases (not just extreme ones) — a real cost of prioritizing a fully
+  general search-based approach over hand-tuned OLL algorithms, traded
+  deliberately for not needing to hand-derive/verify per-case algorithms.
+
+---
+
 ## Phase 3 — Second layer edges / F2L (2026-08-22)
 
 **Goal:** implement `solve_layer2`, completing the first two layers

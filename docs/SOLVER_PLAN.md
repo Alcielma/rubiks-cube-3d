@@ -1,10 +1,9 @@
 # Development Plan: General-Purpose Cube Solver
 
-> **Status:** Phases 0-3 (foundations, bottom cross, first-layer corners,
-> second-layer edges) are done. See `docs/CHANGELOG.md` for what actually
-> changed in each phase, verified results, and any bugs found along the
-> way. This file stays a plan of record; the changelog is the detailed
-> history.
+> **Status:** Phases 0-4 (foundations through last-layer orientation) are
+> done. See `docs/CHANGELOG.md` for what actually changed in each phase,
+> verified results, and any bugs found along the way. This file stays a
+> plan of record; the changelog is the detailed history.
 
 ## Problem statement
 
@@ -123,17 +122,49 @@ updates logical state correctly; existing headless consistency tests
   first two layers fully solved 1500/1500, ~158ms/trial. Live GUI run
   confirmed the animated path too. See `docs/CHANGELOG.md`.
 
-## Phase 4 — Last layer orientation (2-look OLL)
+## Phase 4 — Last layer orientation (2-look OLL) — ✅ done
 
-- `solve_layer3_cross`: orient the last layer's edges (dot / L-shape /
-  line cases → matching algorithm), repeating with `U` rotations between
-  attempts until the top-facing edges all match.
-- `solve_layer3_orient_corners`: orient the last layer's corners (repeated
-  Sune/Anti-Sune-family algorithm + `U` between corners) until all 4 show
-  the top color.
-- Scope: beginner 2-look OLL (a handful of cases), not the full 57-case OLL.
-- **Test:** whole top face shows one color, first two layers still intact,
-  from ~500 random states.
+- Implemented differently than originally sketched here — not a
+  case-recognition table, and not a single joint search either:
+  - `solve_layer3_cross` (orient the 4 top edges) extended the
+    constraint/BFS machinery from Phases 1-3 to support *flexible*
+    targets (a piece may land in any of the 4 top slots — permutation is
+    Phase 5's job, only orientation matters here) and solved all 4 in one
+    joint search.
+  - `solve_layer3_orient_corners` needed a different approach: a single
+    joint search for all 4 corners sometimes requires a genuinely deep
+    sequence (~13-14 moves) because of the corner-twist parity invariant
+    (see below), which was too slow to use as the primary method. Instead
+    it repeats a **shallow "make progress" search** (find any short
+    sequence that orients at least one more corner, without disturbing
+    anything already correct) — the same idea as any real "2-look OLL":
+    apply a short trigger repeatedly with `U` adjustments in between. The
+    trigger the search finds on its own for the common case (2 faces, one
+    corner already correct) is, by coincidence of correctness, exactly
+    the classic **Sune** algorithm (`R U R' U R U2 R'`) — rediscovered
+    from scratch by BFS, not hand-entered.
+  - When even the shallow search finds no progress at all, a **guaranteed
+    fallback** (the original full joint search, deeper budget) handles
+    that round — necessary, not just a performance nicety: from certain
+    states (e.g. exactly 2 corners correct) orienting *exactly one more*
+    is mathematically impossible (the two remaining corners' twists must
+    sum to 0 mod 3, so from 2-correct the only reachable next milestone
+    is 4-correct, never 3; edges have the same "even flip sum" dead end).
+    This same shallow-search-plus-fallback strategy
+    (`CubeSolver._solve_orientation()`) ended up shared by both
+    `solve_layer3_cross` and `solve_layer3_orient_corners` — an initial
+    version only added it to corners, which caused genuine unsolved-cube
+    failures on edges at scramble length ≥20 until fixed. See
+    `docs/CHANGELOG.md` for the full story, including all the bugs found
+    and fixed along the way.
+- Scope: beginner 2-look OLL (a handful of cases via search, not a
+  hand-classified 57-case table).
+- **Test:** first two layers intact + whole top face one color. Full
+  regression across all 4 phases after the last fix: Phase 1 (1500
+  trials), Phase 2 (1500), Phase 3 (150), Phase 4 (100: 20 × scramble
+  lengths 1/5/20/50/100) — all passed, zero failures. Phase 4 averaged
+  ~8.4s/trial (dominated by the guaranteed-fallback path on harder
+  cases); a live GUI run with real animation also confirmed 2/2.
 
 ## Phase 5 — Last layer permutation (2-look PLL)
 
