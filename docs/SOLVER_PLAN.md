@@ -1,9 +1,14 @@
 # Development Plan: General-Purpose Cube Solver
 
-> **Status:** Phases 0-4 (foundations through last-layer orientation) are
-> done. See `docs/CHANGELOG.md` for what actually changed in each phase,
-> verified results, and any bugs found along the way. This file stays a
-> plan of record; the changelog is the detailed history.
+> **Status:** Phases 0-5 are done — the cube fully solves end to end
+> (cross through last-layer permutation). See `docs/CHANGELOG.md` for what
+> actually changed in each phase, verified results, and any bugs found
+> along the way. This file stays a plan of record; the changelog is the
+> detailed history.
+>
+> **Not yet done:** Phase 6 (wire `solve()`/the `K` key to actually call
+> Phases 1-5 — today they're only reachable by calling them directly, e.g.
+> from tests; `K` still just reverses `scramble_history` as before).
 
 ## Problem statement
 
@@ -166,15 +171,41 @@ updates logical state correctly; existing headless consistency tests
   ~8.4s/trial (dominated by the guaranteed-fallback path on harder
   cases); a live GUI run with real animation also confirmed 2/2.
 
-## Phase 5 — Last layer permutation (2-look PLL)
+## Phase 5 — Last layer permutation (2-look PLL) — ✅ done
 
-- `solve_layer3_position_corners`: cycle last-layer corners into correct
-  position (one corner-cycling algorithm + `U`-search over the 4
-  rotations to find/verify the right setup).
-- `solve_layer3_position_edges`: cycle last-layer edges into position
-  (one edge-cycling algorithm), then final `U` alignment (AUF).
-- **Test:** cube fully solved from ~500 random states (this is the full
-  pipeline end to end).
+- Implemented with the exact same machinery as Phase 4, not new
+  algorithm-specific code: permutation and orientation turned out to be
+  the same *shape* of problem (some subset of pieces still "wrong" among
+  the same possibilities, solve all together), so
+  `CubeSolver._solve_with_progress()` (generalized from Phase 4's
+  OLL-only `_solve_orientation()`) and `_make_progress()` (generalized
+  from `_make_orientation_progress()`) now serve both.
+- `_top_corner_constraints()` / `_top_edge_constraints()`: exact
+  target-position constraints (same shape as Phase 1-2's
+  cross/corner constraints, just for "top" instead of "bottom") instead
+  of OLL's flexible ones — since orientation is already correct from
+  Phase 4, position is all that's left to fix. No separate AUF (final `U`
+  alignment) step needed: it falls out of the search automatically.
+- Unlike the plan's original "corners, then edges" framing: positions
+  corners and edges of the last layer **together in one pass**
+  (`_position_last_layer`), not as two independent steps. Permutation has
+  a *joint* parity invariant between corners and edges (total permutation
+  of the last layer is always even), so requiring "corners exactly
+  placed, edges anywhere" turned out to have no solution more than half
+  the time even at the guaranteed-fallback depth — solving both together
+  respects the invariant naturally. `solve_layer3_position_corners` and
+  `solve_layer3_position_edges` are both kept as public methods (matching
+  the plan's step naming) but do the same combined thing; calling both is
+  safe (the second is a no-op if the first finished).
+- The combined search also needed a deeper guaranteed-fallback budget
+  than OLL (16 vs 14) — pure permutation across all 8 last-layer pieces
+  at once sometimes has longer shortest solutions than orientation does.
+- **Test:** full pipeline (Phases 1-5) verified against genuine solved-cube
+  ground truth (each cubie's true creation position, captured *before*
+  scrambling — a test-script bug that captured it *after* scrambling
+  briefly looked like a real solver failure during development; see
+  `docs/CHANGELOG.md`). 75 trials (15 × scramble lengths 1-100), zero
+  failures, ~10.6s/trial average; live GUI run also confirmed 2/2.
 
 ## Phase 6 — Orchestration & integration
 

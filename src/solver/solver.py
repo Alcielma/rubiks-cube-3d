@@ -107,8 +107,12 @@ class CubeSolver:
             self.move(notation)
 
     # ---------------------------------------------------------------
-    # Método de camadas (Layer-by-Layer). Fases 1-4 implementadas;
-    # as demais fases (5-7) seguem como placeholders.
+    # Método de camadas (Layer-by-Layer). Fases 1-5 implementadas: todas
+    # as etapas de cruz/cantos/F2L/OLL/PLL abaixo resolvem de verdade. O
+    # que falta (Fase 6, docs/SOLVER_PLAN.md) é ligar `solve()` (chamado
+    # pela tecla K) para chamar essas etapas em vez de só desfazer o
+    # histórico de `scramble()` — hoje elas só são exercidas via chamada
+    # direta (testes, ou uma futura Fase 6).
     # ---------------------------------------------------------------
     # Ordem das faces laterais ao redor da face inferior. A ordem em si não
     # importa para a corretude (cada peça é buscada de forma independente e
@@ -502,34 +506,39 @@ class CubeSolver:
         Orienta as 4 arestas da última camada (2-look OLL, parte 1): faz a
         cor do topo aparecer virada para cima em todas elas. Não se
         importa com a permutação (qual aresta fica em qual slot) — isso é
-        resolvido na Fase 5. Ver `_solve_orientation` para a estratégia
+        resolvido na Fase 5. Ver `_solve_with_progress` para a estratégia
         (busca rasa por progresso + fallback garantido).
         """
         first_two_layers = self._cross_edge_constraints() + self._corner_constraints() + self._middle_edge_constraints()
-        self._solve_orientation(
-            self._last_layer_edges(), self._top_edge_positions(), first_two_layers,
-            label="orientação das arestas da última camada (OLL)",
+        top_edge_positions = self._top_edge_positions()
+        edge_pieces = self._last_layer_edges()
+        self._solve_with_progress(
+            lambda: [self._oll_orientation_constraint(cubie, top_edge_positions) for cubie in edge_pieces],
+            first_two_layers, label="orientação das arestas da última camada (OLL)",
         )
 
-    # Profundidade máxima por estágio em `_make_orientation_progress`,
-    # pareada por posição com `FACE_EXPANSION_STAGES`. Cada estágio usa uma
+    # Profundidade máxima por estágio em `_make_progress`, pareada por
+    # posição com `FACE_EXPANSION_STAGES`. Cada estágio usa uma
     # profundidade ajustada ao seu custo (mais peças/movimentos permitidos
     # = busca mais cara por nível, então profundidade menor) — o objetivo
     # aqui é ficar barato (é só o "caminho rápido"; ver o fallback
-    # garantido em `_solve_orientation`), não exaustivo: quando até "todas
-    # as faces" falha nessa profundidade rasa, simplesmente não há
+    # garantido em `_solve_with_progress`), não exaustivo: quando até
+    # "todas as faces" falha nessa profundidade rasa, simplesmente não há
     # progresso raso disponível para este estado, e o fallback assume.
     PROGRESS_STAGE_DEPTHS = (9, 6, 5, 4)
 
-    def _make_orientation_progress(self, already_placed, target_constraints, current_count):
+    def _make_progress(self, already_placed, target_constraints, current_count):
         """
-        Busca (BFS rasa) uma sequência curta que orienta PELO MENOS MAIS UM
-        elemento de `target_constraints` do que `current_count` (podendo
-        pular direto para "todos", já que às vezes orientar exatamente
-        mais um é matematicamente impossível — ver o comentário longo em
-        `_solve_orientation`). Executa e retorna True se encontrou; False
-        caso nenhum estágio tenha funcionado dentro do seu orçamento raso
-        de profundidade.
+        Busca (BFS rasa) uma sequência curta que satisfaz PELO MENOS MAIS
+        UMA constraint de `target_constraints` do que `current_count`
+        (podendo pular direto para "todas", já que às vezes satisfazer
+        exatamente mais uma é matematicamente impossível — ver o
+        comentário longo em `_solve_with_progress`). Serve tanto para
+        orientação (OLL: `target_constraints` tem posição flexível) quanto
+        para permutação (PLL: posição exata) — a lógica de busca é a
+        mesma, só muda o que cada constraint verifica. Executa e retorna
+        True se encontrou; False caso nenhum estágio tenha funcionado
+        dentro do seu orçamento raso de profundidade.
         """
         for stage_faces, max_depth in zip(self.FACE_EXPANSION_STAGES, self.PROGRESS_STAGE_DEPTHS):
             axes_indices = {FACE_AXIS_INDEX[face] for face in stage_faces if face != "top"}
@@ -552,53 +561,59 @@ class CubeSolver:
 
         return False
 
-    def _solve_orientation(self, oll_pieces, valid_positions, already_placed, label, max_rounds=8):
+    def _solve_with_progress(self, build_constraints, already_placed, label, max_rounds=8, fallback_max_depth=14):
         """
-        Orienta cada peça em `oll_pieces` (arestas OU cantos da última
-        camada — a cor do topo precisa virar pra cima), em qualquer um dos
-        slots em `valid_positions` (a permutação exata fica para a Fase
-        5), mantendo `already_placed` intacto.
+        Satisfaz cada constraint que `build_constraints()` produzir (sem
+        argumentos, recalculada a cada rodada a partir do estado ATUAL do
+        cubo), mantendo `already_placed` intacto. Serve tanto para
+        orientação (OLL: constraints de posição flexível, cor do topo pra
+        cima) quanto para permutação (PLL: constraints de posição exata,
+        cada peça no seu slot certo) — ambas têm o mesmo formato de
+        problema (algumas peças ainda "erradas" das mesmas
+        `n` possíveis, resolver todas juntas).
 
-        Repete uma busca RASA por PROGRESSO (`_make_orientation_progress`,
-        barata) até todas estarem orientadas — a mesma estratégia usada
-        por qualquer "2-look OLL" real (aplicar um gatilho curto
-        repetidas vezes, com ajustes de U entre uma aplicação e outra). O
-        gatilho que a própria busca encontra para o caso mais comum de
-        cantos (2 faces, 1 já orientado) por sinal É o Sune clássico
+        Repete uma busca RASA por PROGRESSO (`_make_progress`, barata) até
+        todas satisfeitas — a mesma estratégia usada por qualquer "2-look
+        OLL/PLL" real (aplicar um gatilho curto repetidas vezes, com
+        ajustes de U entre uma aplicação e outra). O gatilho que a própria
+        busca encontra para o caso mais comum de orientação de cantos (2
+        faces, 1 já orientado) por sinal É o Sune clássico
         (`R U R' U R U2 R'`) — a busca o redescobriu sozinha, sem receita.
 
         Quando uma rodada não acha NENHUM progresso raso, cai para uma
         busca completa e garantida (`_solve_constraints_together`, mais
         profunda e cara) só para aquela rodada. Isso é necessário, não só
-        uma otimização: a paridade de orientação — soma de flips de
-        aresta sempre par; soma de giros de canto sempre múltipla de 3 —
-        às vezes torna "orientar exatamente mais uma peça" matematicamente
-        impossível. Ex. cantos: com exatamente 2 já corretos, os outros 2
-        têm giros que só somam à paridade certa se forem opostos (+1 e
-        -1, nunca +1 e +1) — então NUNCA dá pra corrigir só um deles, e a
-        única "próxima parada" válida é corrigir os 2 juntos. O mesmo
-        raciocínio vale para arestas (soma de flips par: "exatamente 1 ou
-        3 corrigidas" é impossível). Uma busca rasa por "só mais uma"
-        nunca encontra isso — é genuinamente impossível naquela
-        profundidade ou em qualquer profundidade —, daí o fallback
+        uma otimização: tanto orientação quanto permutação têm invariantes
+        de paridade — soma de flips de aresta sempre par; soma de giros de
+        canto sempre múltipla de 3; permutação do cubo inteiro sempre par
+        — que às vezes tornam "corrigir exatamente mais uma peça"
+        matematicamente impossível. Ex. orientação de cantos: com
+        exatamente 2 já corretos, os outros 2 têm giros que só somam à
+        paridade certa se forem opostos (+1 e -1, nunca +1 e +1) — então
+        NUNCA dá pra corrigir só um deles, e a única "próxima parada"
+        válida é corrigir os 2 juntos. Ex. permutação: nunca dá pra trocar
+        só 2 cantos de lugar sem também trocar 2 arestas (ou vice-versa),
+        já que uma troca sozinha é uma permutação ímpar. Uma busca rasa
+        por "só mais uma" nunca encontra isso — é genuinamente impossível
+        naquela profundidade ou em qualquer profundidade —, daí o fallback
         garantido (descoberto assim: `solve_layer3_cross` chegou a falhar
         silenciosamente em scrambles maiores antes deste fallback existir,
         ver `docs/CHANGELOG.md`).
         """
         for _ in range(max_rounds):
-            constraints = [self._oll_orientation_constraint(cubie, valid_positions) for cubie in oll_pieces]
+            constraints = build_constraints()
             current_count = self._count_satisfied(self._current_state(constraints), constraints)
             if current_count == len(constraints):
                 return
 
-            if self._make_orientation_progress(already_placed, constraints, current_count):
+            if self._make_progress(already_placed, constraints, current_count):
                 continue
 
             # Nenhum progresso raso disponível: cai para a busca completa e
             # garantida (mais cara), só para esta rodada. `_solve_group` já
             # imprime seu próprio aviso se nem essa encontrar solução.
             self._solve_constraints_together(
-                constraints, already_placed=already_placed, label=f"{label} (busca completa)", max_depth=14,
+                constraints, already_placed=already_placed, label=f"{label} (busca completa)", max_depth=fallback_max_depth,
             )
             return
 
@@ -608,7 +623,7 @@ class CubeSolver:
         """
         Orienta os 4 cantos da última camada (2-look OLL, parte 2). Mantém
         as duas primeiras camadas E as arestas da última camada (já
-        orientadas na etapa anterior) intactas. Ver `_solve_orientation`
+        orientadas na etapa anterior) intactas. Ver `_solve_with_progress`
         para a estratégia (busca rasa por progresso + fallback garantido).
         """
         already_placed = self._cross_edge_constraints() + self._corner_constraints() + self._middle_edge_constraints()
@@ -617,16 +632,128 @@ class CubeSolver:
             self._oll_orientation_constraint(cubie, top_edge_positions)
             for cubie in self._last_layer_edges()
         ]
-        self._solve_orientation(
-            self._last_layer_corners(), self._top_corner_positions(), already_placed,
-            label="orientação dos cantos da última camada (OLL)", max_rounds=max_rounds,
+        top_corner_positions = self._top_corner_positions()
+        corner_pieces = self._last_layer_corners()
+        self._solve_with_progress(
+            lambda: [self._oll_orientation_constraint(cubie, top_corner_positions) for cubie in corner_pieces],
+            already_placed, label="orientação dos cantos da última camada (OLL)", max_rounds=max_rounds,
+        )
+
+    def _top_corner_constraints(self):
+        """
+        Constrói as constraints de posição EXATA dos 4 cantos da última
+        camada (permutação, Fase 5) a partir do estado ATUAL do cubo —
+        mesma forma de `_corner_constraints`, só que para a face "top" em
+        vez de "bottom".
+        """
+        top_axis, top_index = FACE_AXIS_INDEX["top"]
+        top_color = self.get_center_color("top")
+
+        constraints = []
+        for face_a, face_b in self.ADJACENT_SIDE_FACES:
+            color_a = self.get_center_color(face_a)
+            color_b = self.get_center_color(face_b)
+            cubie = self.get_corner_cubie(top_color, color_a, color_b)
+
+            axis_a, index_a = FACE_AXIS_INDEX[face_a]
+            axis_b, index_b = FACE_AXIS_INDEX[face_b]
+            target_pos = [0, 0, 0]
+            target_pos[top_axis] = top_index
+            target_pos[axis_a] = index_a
+            target_pos[axis_b] = index_b
+
+            home_face_top = next(face for face, color in cubie.stickers.items() if color == top_color)
+            home_face_a = next(face for face, color in cubie.stickers.items() if color == color_a)
+
+            constraints.append(self._constraint(
+                cubie,
+                target_pos,
+                [
+                    (FACE_NORMALS[home_face_top], "top"),
+                    (FACE_NORMALS[home_face_a], face_a),
+                ],
+            ))
+        return constraints
+
+    def _top_edge_constraints(self):
+        """
+        Constrói as constraints de posição EXATA das 4 arestas da última
+        camada (permutação, Fase 5) a partir do estado ATUAL do cubo —
+        mesma forma de `_cross_edge_constraints`, só que para a face "top"
+        em vez de "bottom".
+        """
+        top_axis, top_index = FACE_AXIS_INDEX["top"]
+        top_color = self.get_center_color("top")
+
+        constraints = []
+        for side_face in self.CROSS_SIDE_FACES:
+            side_color = self.get_center_color(side_face)
+            cubie = self.get_edge_cubie(top_color, side_color)
+
+            side_axis, side_index = FACE_AXIS_INDEX[side_face]
+            target_pos = [0, 0, 0]
+            target_pos[top_axis] = top_index
+            target_pos[side_axis] = side_index
+
+            home_face_top = next(face for face, color in cubie.stickers.items() if color == top_color)
+
+            constraints.append(self._constraint(
+                cubie, target_pos, [(FACE_NORMALS[home_face_top], "top")]
+            ))
+        return constraints
+
+    def _position_last_layer(self):
+        """
+        Posiciona os 4 cantos E as 4 arestas da última camada (permutação
+        final) DE UMA VEZ SÓ — com isso o cubo inteiro fica resolvido.
+
+        Tentar posicionar só os cantos primeiro, mantendo as arestas
+        apenas orientadas (não posicionadas) como um "1-look" separado,
+        provou ser pouco confiável na prática: a permutação da última
+        camada tem paridade CONJUNTA entre cantos e arestas (a permutação
+        do cubo inteiro é sempre par — nunca dá pra trocar só 2 cantos de
+        lugar sem também mexer nas arestas, ou vice-versa), então exigir
+        "só os cantos corretos, arestas em qualquer posição" mais da
+        metade das vezes não tinha solução dentro do orçamento de busca
+        (mesmo no fallback garantido, profundidade 14) — mas dava pra
+        completar corrigindo os dois juntos depois. Resolver cantos e
+        arestas juntos desde o início evita essa fragilidade por
+        completo, e é mais fiel ao "PLL" real de qualquer forma (a
+        maioria dos algoritmos de PLL move cantos e arestas na mesma
+        sequência).
+
+        `fallback_max_depth=16` (acima do padrão 14 do OLL): mesmo
+        resolvendo cantos e arestas juntos, o fallback garantido ainda
+        precisou de mais que 14 movimentos em alguns casos — permutação
+        pura (sem também precisar reorientar) às vezes tem soluções mais
+        longas do que orientação, dado o espaço de busca maior (8 peças
+        de uma vez, todas com posição exata).
+        """
+        first_two_layers = self._cross_edge_constraints() + self._corner_constraints() + self._middle_edge_constraints()
+        self._solve_with_progress(
+            lambda: self._top_corner_constraints() + self._top_edge_constraints(),
+            first_two_layers, label="posição da última camada (PLL)", fallback_max_depth=16,
         )
 
     def solve_layer3_position_corners(self):
-        print("Etapa 6: Posicionar cantos - placeholder (não implementado).")
+        """
+        Posiciona a última camada inteira (cantos e arestas juntos — ver
+        `_position_last_layer`). O nome individual é mantido para bater
+        com a estrutura de etapas do plano (docs/SOLVER_PLAN.md); na
+        prática esta e `solve_layer3_position_edges` fazem a mesma coisa,
+        e chamar as duas em sequência é seguro (a segunda não tem nada a
+        fazer se a primeira já resolveu tudo).
+        """
+        self._position_last_layer()
 
     def solve_layer3_position_edges(self):
-        print("Etapa 7: Posicionar arestas - placeholder (não implementado).")
+        """
+        Posiciona a última camada inteira (cantos e arestas juntos — ver
+        `_position_last_layer`). Com isso o cubo inteiro fica resolvido.
+        Idempotente em relação a `solve_layer3_position_corners`: se ela já
+        tiver terminado o trabalho, esta chamada não faz nada.
+        """
+        self._position_last_layer()
 
     def solve(self):
         """

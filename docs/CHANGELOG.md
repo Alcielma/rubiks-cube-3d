@@ -3,6 +3,92 @@
 Tracks all changes made as part of the general-purpose solver effort (see
 `docs/SOLVER_PLAN.md` for the phased plan this follows). Newest first.
 
+## Phase 5 — Last layer permutation / 2-look PLL (2026-08-22)
+
+**Goal:** implement `solve_layer3_position_corners` and
+`solve_layer3_position_edges` — the last two placeholders. With this, the
+cube fully solves end to end (Phases 1-5), verified against genuine
+solved-cube ground truth.
+
+### Added
+- Generalized Phase 4's OLL-only helpers into constraint-agnostic ones:
+  `_make_orientation_progress` → `_make_progress`,
+  `_solve_orientation` → `_solve_with_progress`. Permutation (PLL: exact
+  target position) and orientation (OLL: flexible target position) turned
+  out to be the same *shape* of search problem — "some subset of pieces
+  still wrong among the same possibilities, solve them all together" —
+  so the exact same progress-search-plus-guaranteed-fallback machinery
+  serves both without any PLL-specific search code.
+- `_top_corner_constraints()` / `_top_edge_constraints()`: exact
+  target-position constraints for the last layer, same shape as Phase
+  1-2's `_corner_constraints()`/`_cross_edge_constraints()` (just "top"
+  instead of "bottom") — used once orientation is already correct (Phase
+  4) and only position is left to fix.
+- `_position_last_layer()`: positions all 8 last-layer pieces (corners
+  and edges) in one combined `_solve_with_progress()` call.
+  `solve_layer3_position_corners()` and `solve_layer3_position_edges()`
+  both just call it — kept as two separate public methods to match the
+  plan's phase/step naming, but calling either (or both, in either order)
+  does the same thing; the second call is a no-op if the first already
+  finished.
+- `_solve_with_progress()` gained a `fallback_max_depth` parameter
+  (default 14, matching Phase 4's OLL usage unchanged); last-layer
+  positioning passes 16 (see "Fixed" below for why).
+
+### Fixed
+1. **Corners-only positioning was unreliable** (correctness/design, caught
+   before merging): the first version positioned corners and edges as two
+   separate `_solve_with_progress()` calls — corners first (edges tracked
+   as "must stay oriented, position free"), edges second (corners tracked
+   as "must stay exactly placed"). This is the literal "2-look PLL" the
+   plan described, but permutation has a *joint* parity invariant between
+   corners and edges (the whole cube's permutation is always even — you
+   can never swap just 2 corners without an accompanying odd change in
+   edges, or vice versa), so requiring "corners exactly placed, edges
+   anywhere" has no solution more than half the time in this testing —
+   confirmed even the guaranteed fallback (depth 14) failing on a
+   majority of trials at scramble length 5. It happened to still work
+   most of the time end-to-end, because the edges step's own
+   `already_placed` freshly rebuilds corner constraints from current
+   color state (the true target, not a snapshot) — so an unfinished
+   corners step effectively got "retried" folded into the edges step.
+   That's an accidental safety net, not a designed guarantee, and it
+   still failed outright on 2/15 (scramble 20) and 1/15 (scramble 50)
+   trials. Fixed by positioning corners and edges together from the
+   start (`_position_last_layer`), which respects the joint parity
+   constraint naturally and is arguably more faithful to real PLL anyway
+   (most named PLL algorithms move corners and edges in the same
+   sequence).
+2. **`fallback_max_depth=14` still weren't enough for the combined
+   search** in some cases even after fix #1 — real named PLL algorithms
+   for some cases (e.g. "H perm", certain double-swaps) run into the
+   mid-teens even for humans, and this search additionally has to keep
+   both full lower layers correct at the same time. Raised to 16 for
+   `_position_last_layer` specifically (left at 14 for OLL, which never
+   needed more).
+3. **Not a solver bug — a test-script bug that briefly looked like one**:
+   an early full-solve verification script set each cubie's
+   `original_position` reference *after* calling `scramble()` instead of
+   before, so it was comparing the solved cube against a snapshot of the
+   *scrambled* state — reporting ~20 of 26 pieces "unsolved" after a
+   correct, complete solve. Worth recording because it's an easy mistake
+   to repeat: always capture the ground-truth reference immediately after
+   `Cube()` construction, before any `scramble()` call.
+
+### Verified
+- Headless: full Phase 1-5 pipeline against genuine ground truth (each
+  cubie's real creation position/orientation, captured before scrambling)
+  — 75 trials (15 × scramble lengths 1/5/20/50/100), zero failures,
+  ~10.6s/trial average.
+- Re-ran Phase 1 (1500 trials), Phase 2 (1500), Phase 3 (150), and Phase 4
+  (100) regressions after the `_make_progress`/`_solve_with_progress`
+  rename and the OLL/PLL refactor — all still pass, zero failures,
+  confirming the generalization didn't disturb Phase 4's behavior.
+- Live GUI (real `Renderer`, real animation queue): 2/2 scrambled cubes
+  fully solved end to end (Phases 1-5), ~34-42s each with animation.
+
+---
+
 ## Phase 4 — Last layer orientation / 2-look OLL (2026-08-22)
 
 **Goal:** implement `solve_layer3_cross` (orient the 4 top edges) and

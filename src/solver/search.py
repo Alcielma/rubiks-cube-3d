@@ -315,10 +315,10 @@ def _bidirectional_bfs(start_fast, goal_fast, max_depth, notations):
 def _unidirectional_bfs(start, goal_fn, max_depth, notations):
     """
     BFS unidirecional — fallback para objetivos que não se reduzem a um
-    único estado concreto (ex.: "progresso": pelo menos mais uma peça
-    orientada do que agora, usada por `CubeSolver._make_orientation_progress`
-    para o OLL dos cantos — várias sequências diferentes satisfazem isso,
-    não um único estado-alvo).
+    único estado concreto (ex.: "progresso": pelo menos mais uma constraint
+    satisfeita do que agora, usada por `CubeSolver._make_progress` para o
+    OLL e o PLL — várias sequências diferentes satisfazem isso, não um
+    único estado-alvo).
     """
     all_arrays = _move_effect_arrays()
     arrays = [all_arrays[MOVE_INDEX[n]] for n in notations]
