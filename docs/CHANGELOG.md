@@ -3,6 +3,37 @@
 Tracks all changes made as part of the general-purpose solver effort (see
 `docs/SOLVER_PLAN.md` for the phased plan this follows). Newest first.
 
+## UX: "Resolvido em MM:SS" message (2026-08-22)
+
+Small Phase 7-style polish item, requested directly rather than planned:
+show how long a `K` solve took, on screen, not just in the console.
+
+### Added
+- `CubeSolver.solve()` times the actual solving work and, on success, sets
+  `Renderer.solve_message` to `"Resolvido em MM:SS"`
+  (`CubeSolver._format_elapsed()`). Not set for the already-solved
+  no-op case (nothing meaningful to report).
+- `Renderer.draw_ui()` renders it as a green banner top-center of the
+  window (doesn't overlap the existing "?" help button).
+- `InputHandler` clears the message on any subsequent manual move or
+  scramble (`R`/`U`/etc. or `S`); `solve()` also clears it at the start of
+  each run, so a stale time never lingers once the cube's been touched
+  again.
+
+### Verified
+- Headless: message set with the right prefix/format after a real solve;
+  not set after the already-solved no-op path.
+- Live GUI (real `Renderer`/`InputHandler`, genuine posted key events): `S`
+  then `K` shows the message; a manual move or a new `S` clears it;
+  solving again after a single manual move shows `00:00` correctly
+  (genuinely sub-second).
+- A screenshot captured from the actual render thread (`glReadPixels`
+  only returns real data on the thread that owns the GL context — an
+  earlier attempt from the driver/test thread silently produced an
+  all-black image) confirms on-screen placement, sizing, and readability.
+
+---
+
 ## Phase 6 — Orchestration & integration (2026-08-22)
 
 **Goal:** wire `CubeSolver.solve()` (what the `K` key calls) to actually
