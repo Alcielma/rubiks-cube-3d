@@ -12,7 +12,9 @@ Este é um projeto de Cubo Mágico 3D interativo desenvolvido com **Python, Pyga
 - Rotação inversa (anti-horária) com a tecla `Shift`.
 - Botão interativo `?` com instruções de uso em tela.
 - Função de embaralhar (com histórico acumulado).
-- Solução automática animada que desfaz todo o histórico de embaralhamentos.
+- Solução automática animada e completa (método de camadas: cruz, cantos,
+  F2L, OLL, PLL), a partir de **qualquer** estado do cubo — não só de um
+  embaralhamento feito pela tecla `S`.
 
 ---
 
@@ -79,7 +81,7 @@ rubiks-cube-3d/
 - **src/cube/** → contém a lógica e o estado do Cubo Mágico, incluindo os cubinhos, cores, posições e operações do cubo.
 - **src/graphics/** → responsável pela renderização 3D com OpenGL, gerenciamento da câmera e operações matemáticas utilizadas nas transformações e matrizes.
 - **src/input/controller.py** → processa as entradas do usuário, como eventos de teclado e mouse, e as converte em ações dentro do jogo.
-- **src/solver/solver.py** → responsável pela lógica de resolução automática do cubo, incluindo a execução animada dos movimentos e estruturas preparadas para futuras implementações de métodos de resolução.
+- **src/solver/solver.py** → responsável pela lógica de resolução automática do cubo mágico (método de camadas completo: cruz, cantos, F2L, OLL, PLL — ver `docs/SOLVER_PLAN.md`), incluindo a execução animada dos movimentos.
 - **tests/** → diretório reservado para os testes automatizados dos módulos do projeto.
 - **assets/** → armazena recursos externos utilizados pela aplicação, como fontes, texturas, imagens e outros arquivos.
 - **requirements.txt** → lista as dependências Python necessárias para executar o projeto.
@@ -112,7 +114,17 @@ rubiks-cube-3d/
 
 ## Observações
 
-- O solucionador atual desfaz **exatamente** os movimentos de `scramble()` em ordem inversa.
-  Isso é o suficiente para garantir que o cubo volte ao estado resolvido com animação completa.
-- A estrutura já está preparada para implementar futuramente o **método de camadas
-  (Layer-by-Layer)** real. Os placeholders estão em `src/solver/solver.py`.
+- `CubeSolver.solve()` (acionado pela tecla `K`) resolve o cubo mágico por
+  completo usando o método de camadas (Layer-by-Layer): cruz, cantos da
+  primeira camada, segunda camada (F2L), orientação da última camada
+  (OLL) e permutação da última camada (PLL). Ele lê o estado **atual** do
+  cubo — não depende de ter sido embaralhado pela tecla `S`, então também
+  resolve um cubo mexido só manualmente, ou uma mistura dos dois.
+- Ao concluir, aparece uma mensagem **"Resolvido em MM:SS"** na tela com o
+  tempo que a resolução levou. A busca de cada etapa roda em uma thread
+  separada e cede periodicamente o controle para a thread de renderização,
+  então a câmera e o zoom continuam respondendo (com uma leve oscilação
+  ocasional em resoluções mais difíceis) enquanto o `K` está resolvendo.
+- O histórico completo do desenvolvimento do solucionador — decisões de
+  design, o plano por fases e os resultados de cada verificação — está
+  documentado em `docs/SOLVER_PLAN.md` e `docs/CHANGELOG.md`.
