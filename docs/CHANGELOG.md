@@ -3,6 +3,63 @@
 Tracks all changes made as part of the general-purpose solver effort (see
 `docs/SOLVER_PLAN.md` for the phased plan this follows). Newest first.
 
+## Perf: camera/zoom stutter during K solving (2026-08-22)
+
+**Reported by the user** after trying the finished solver: the camera
+visibly stutters/freezes when rotating or zooming while `K` is solving.
+
+### Root cause
+`solve()` runs in a background thread; the search inside it
+(`solver/search.py`) is tight, uninterrupted Python looping that can run
+for tens of seconds in the guaranteed-fallback case (see Phases 4-5).
+That starves the main render thread of GIL time-slices, so mouse-driven
+camera rotation/zoom visibly stutter while solving. Confirmed by
+instrumenting the render loop's own frame timestamps: with no yielding,
+individual frame gaps of **1.0-1.5+ seconds** occurred during a solve,
+versus 17-24ms (normal 60fps) with no solver running at all — ruling out
+an unrelated environment cause (same machine, same window, only the
+solver thread's activity differs).
+
+### Fixed
+- `solver/search.py`'s BFS loops (both bidirectional and unidirectional)
+  now yield the GIL (`time.sleep(0)`) every `_YIELD_EVERY_STATES` (10)
+  states expanded. Tuned empirically: 1500 states between yields still
+  left 1s+ gaps (barely different from never yielding); 10 cut the worst
+  gap to ~400-450ms. Going lower than 10 showed no further improvement in
+  testing, so wasn't worth the added yield overhead.
+- `solve_pieces()` also yields once, unconditionally, at the top of every
+  call — a phase calls it repeatedly in sequence (once per
+  `FACE_EXPANSION_STAGES` stage, once per progress round in
+  `_solve_with_progress`), and a series of individually "cheap" searches
+  (each too small to ever hit the in-loop threshold above) can still add
+  up to a long stretch with zero yields without this.
+
+### Honest limitation
+This is a real, measured improvement (~3.5x cut in worst-case stutter),
+not a complete fix — some sub-500ms hitches remain during the rare deep
+fallback searches. Tried and rejected as not worth it: combining with a
+reduced `sys.setswitchinterval()` (tested at 0.0001-0.0005s) — plateaued
+at the same ~400-450ms floor, so skipped to keep the fix local to
+`search.py` rather than an interpreter-wide setting. A fully smooth
+result would need running the solver in a separate OS process instead of
+a thread (true parallelism, no GIL sharing with the render loop) — a
+materially bigger change than this fix's scope; not attempted.
+
+### Verified
+- Headless: Phase 1 (1500 trials) and Phase 2 (1500 trials) regressions
+  still pass with zero failures, and no meaningful timing overhead for
+  the common (fast, sub-second) solve case — the yields only matter for
+  searches that were already going to take a while.
+- Live GUI: instrumented the actual render loop to record frame
+  timestamps during a solve with a fixed scramble seed (for a fair
+  before/after comparison) — max frame gap dropped from ~1516ms
+  (unyielded) to ~427ms (fixed), gaps > 100ms dropped from 20 to 10 over
+  the same solve. A second live test posted genuine mouse-drag events
+  during an active solve and confirmed the camera's rotation angle
+  actually changed in response (not just theoretically processed).
+
+---
+
 ## UX: "Resolvido em MM:SS" message (2026-08-22)
 
 Small Phase 7-style polish item, requested directly rather than planned:
