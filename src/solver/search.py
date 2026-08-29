@@ -31,6 +31,7 @@ simultaneamente (duas primeiras camadas + última camada inteira):
    rápido que tuplas aninhadas, o que importa quando a busca precisa
    armazenar centenas de milhares de estados visitados.
 """
+import time
 from collections import deque
 
 from cube.notation import LETTER_TO_FACE, parse_move
@@ -39,6 +40,20 @@ from graphics.matrix import Matrix3, rotation_matrix_for_axis
 ALL_MOVES = [letter + suffix for letter in LETTER_TO_FACE for suffix in ("", "'", "2")]
 ALL_POSITIONS = [(x, y, z) for x in (-1, 0, 1) for y in (-1, 0, 1) for z in (-1, 0, 1)]
 ORIENTATION_COUNT = 24  # tamanho do grupo de rotação do cubo
+
+# `solve()` roda numa thread separada; sem isso, uma busca longa (o
+# fallback garantido do OLL/PLL pode levar dezenas de segundos) mantém
+# essa thread ocupada com laços Python bem apertados, e a GIL não troca
+# de thread com frequência suficiente para a thread principal (câmera,
+# zoom, o próprio desenho) rodar de forma fluida — daí o engasgo relatado
+# ao girar a câmera ou usar o zoom enquanto o K está resolvendo. Ceder
+# explicitamente a cada N estados expandidos resolve a maior parte disso;
+# medido empiricamente (ver docs/CHANGELOG.md): a cada 1500 estados, o
+# maior engasgo observado ainda passava de 1s (quase igual a não ceder
+# nunca); a cada 10, caiu para ~400-450ms. Descer mais que isso não trouxe
+# mais ganho nos testes, então não vale o overhead extra de ceder com mais
+# frequência ainda.
+_YIELD_EVERY_STATES = 10
 
 POSITION_INDEX = {position: i for i, position in enumerate(ALL_POSITIONS)}
 INDEX_POSITION = {i: position for position, i in POSITION_INDEX.items()}
@@ -274,6 +289,7 @@ def _bidirectional_bfs(start_fast, goal_fast, max_depth, notations):
 
     frontier_f = [start_fast]
     frontier_b = [goal_fast]
+    states_expanded = 0
 
     for _ in range(max_depth):
         if not frontier_f or not frontier_b:
@@ -282,6 +298,10 @@ def _bidirectional_bfs(start_fast, goal_fast, max_depth, notations):
         if len(frontier_f) <= len(frontier_b):
             new_frontier = []
             for state in frontier_f:
+                states_expanded += 1
+                if states_expanded % _YIELD_EVERY_STATES == 0:
+                    time.sleep(0)  # cede a GIL — ver comentário em _YIELD_EVERY_STATES
+
                 path = forward_path[state]
                 for i, array in enumerate(arrays):
                     new_state = _apply_move_to_state(state, array)
@@ -296,6 +316,10 @@ def _bidirectional_bfs(start_fast, goal_fast, max_depth, notations):
         else:
             new_frontier = []
             for state in frontier_b:
+                states_expanded += 1
+                if states_expanded % _YIELD_EVERY_STATES == 0:
+                    time.sleep(0)
+
                 path = backward_path[state]
                 for i, inverse_array in enumerate(inverse_arrays):
                     # pred_state + notation == state, então pred_state = apply(inverse(notation), state)
@@ -327,11 +351,16 @@ def _unidirectional_bfs(start, goal_fn, max_depth, notations):
 
     visited = {start_fast}
     queue = deque([(start_fast, [])])
+    states_expanded = 0
 
     while queue:
         state, path = queue.popleft()
         if len(path) >= max_depth:
             continue
+
+        states_expanded += 1
+        if states_expanded % _YIELD_EVERY_STATES == 0:
+            time.sleep(0)  # cede a GIL — ver comentário em _YIELD_EVERY_STATES
 
         for notation, array in zip(notations, arrays):
             new_state = _apply_move_to_state(state, array)
@@ -384,6 +413,17 @@ def solve_pieces(pieces, goal_fn, goal_state=None, max_depth=10, allowed_moves=N
     :return: lista de notações de movimento (pode ser vazia se já resolvido),
              ou None se nenhuma solução foi encontrada até `max_depth`.
     """
+    # Cede a GIL uma vez por CHAMADA, incondicionalmente — não só a cada N
+    # estados expandidos dentro da busca (ver `_YIELD_EVERY_STATES`). Uma
+    # fase chama isto várias vezes em sequência (uma por estágio de
+    # `FACE_EXPANSION_STAGES`, uma por rodada de progresso) e uma busca
+    # "barata" (poucos estados, falha ou sucesso rápido) pode nunca
+    # atingir o limiar de estados internos — sem este yield aqui, várias
+    # buscas baratas em sequência ainda somam um trecho longo sem ceder a
+    # GIL, e a thread de renderização engasga mesmo que cada busca
+    # individual pareça rápida.
+    time.sleep(0)
+
     notations = allowed_moves if allowed_moves is not None else ALL_MOVES
 
     start = tuple(pieces)
