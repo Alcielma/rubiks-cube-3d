@@ -814,12 +814,15 @@ class CubeSolver:
             return
         self.solving = True
         self.move_count = 0
+        self.renderer.solve_message = None
         print("Iniciando solução automática do cubo mágico...")
 
         try:
             if self.is_solved():
                 print("O cubo já está resolvido.")
                 return
+
+            start_time = time.time()
 
             self.solve_layer1_cross()
             self.solve_layer1_corners()
@@ -829,11 +832,22 @@ class CubeSolver:
             self.solve_layer3_position_corners()
             self.solve_layer3_position_edges()
 
+            elapsed = time.time() - start_time
+
             if self.is_solved():
-                print("Cubo mágico solucionado!")
+                message = f"Resolvido em {self._format_elapsed(elapsed)}"
+                print(f"Cubo mágico solucionado! {message}.")
+                self.renderer.solve_message = message
             else:
                 print("AVISO: a resolução terminou, mas o cubo não está totalmente resolvido — veja os avisos acima.")
         except SolverMoveLimitExceeded as error:
             print(f"AVISO: resolução abortada — {error}")
         finally:
             self.solving = False
+
+    @staticmethod
+    def _format_elapsed(seconds):
+        """Formata segundos como MM:SS (ex.: 75.3 -> "01:15") para a mensagem de "Resolvido em"."""
+        total_seconds = int(seconds)
+        minutes, secs = divmod(total_seconds, 60)
+        return f"{minutes:02d}:{secs:02d}"

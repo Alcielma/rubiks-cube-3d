@@ -74,8 +74,10 @@ class InputHandler:
             if event.key in FACE_KEYS:
                 notation = FACE_KEYS[event.key] + ("'" if shift_pressed else "")
                 cube.apply_move(notation)
+                self.renderer.solve_message = None
             if event.key == K_s:
                 cube.scramble()
+                self.renderer.solve_message = None
             if event.key == K_k:
                 if self.renderer.solver and not self.renderer.solver.solving:
                     solve_thread = threading.Thread(target=self.renderer.solver.solve)
