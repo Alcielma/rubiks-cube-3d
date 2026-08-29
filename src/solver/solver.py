@@ -1,12 +1,11 @@
 """
 Solucionador automático do cubo mágico.
 
-A versão atual desfaz o histórico de todos os embaralhamentos executados
-pelo método `Cube.scramble()`. Isso garante que o cubo volte ao estado
-resolvido de forma totalmente visual (um movimento por vez, com animação).
-
-O esqueleto para o método de camadas (Layer-by-Layer) também está presente
-como métodos placeholder para eventuais implementações futuras.
+`CubeSolver.solve()` resolve o cubo a partir do estado ATUAL, usando o
+método de camadas (Layer-by-Layer, Fases 1-5: cruz, cantos da primeira
+camada, F2L, OLL, PLL — ver docs/SOLVER_PLAN.md e docs/CHANGELOG.md). Não
+depende de `Cube.scramble_history`: funciona em qualquer estado alcançável
+por movimentos legais, não só um que este app tenha embaralhado.
 """
 import time
 
@@ -15,13 +14,33 @@ from cube.notation import FACE_AXIS_INDEX, FACE_NORMALS, LETTER_TO_FACE, face_fo
 from solver.search import solve_pieces, resolve_in_place_orientation
 
 
+class SolverMoveLimitExceeded(Exception):
+    """
+    Levantada quando `CubeSolver.solve()` ultrapassa `CubeSolver.MOVE_LIMIT`
+    movimentos. Não deveria acontecer em uso normal (ver o comentário em
+    `MOVE_LIMIT`) — existe para abortar alto e claro em vez de deixar a
+    thread de resolução girando indefinidamente caso alguma fase tenha uma
+    lacuna de lógica não coberta pelos testes.
+    """
+
+
 class CubeSolver:
     """Coordena a solução automática do Cube via fila de movimentos do Renderer."""
+
+    # Limite de segurança para o total de movimentos em UM `solve()`. Uma
+    # resolução legítima (mesmo no pior caso observado em testes: várias
+    # rodadas de fallback profundo no OLL/PLL) fica bem abaixo disso — o
+    # limite existe só para transformar uma eventual lacuna de lógica não
+    # coberta pelos testes em um aviso claro, em vez de a thread de
+    # resolução ficar girando (e devolvendo movimentos ao Renderer)
+    # indefinidamente.
+    MOVE_LIMIT = 500
 
     def __init__(self, cube, renderer):
         self.cube = cube
         self.renderer = renderer
         self.solving = False
+        self.move_count = 0
         # Quando True (padrão), os movimentos são animados via a fila do
         # Renderer. Testes automatizados podem definir como False para
         # aplicar os movimentos instantaneamente, sem precisar de um loop
@@ -94,6 +113,13 @@ class CubeSolver:
     # construção usado pelos métodos de solução por camadas (Layer-by-Layer).
     # ---------------------------------------------------------------
     def move(self, notation):
+        self.move_count += 1
+        if self.move_count > self.MOVE_LIMIT:
+            raise SolverMoveLimitExceeded(
+                f"mais de {self.MOVE_LIMIT} movimentos executados nesta resolução "
+                "(provável lacuna na lógica de alguma fase)."
+            )
+
         if self.animated:
             axis, index, angle = parse_move(notation)
             self.renderer.move_queue.append((notation, axis, index, angle))
@@ -755,33 +781,59 @@ class CubeSolver:
         """
         self._position_last_layer()
 
+    def is_solved(self):
+        """
+        True se o cubo inteiro (todas as 20 peças móveis: 4 arestas + 4
+        cantos da primeira camada, 4 arestas do meio, 4 cantos + 4 arestas
+        da última camada) está na posição e orientação corretas. Reaproveita
+        as mesmas constraints usadas para resolver cada camada — juntas,
+        elas descrevem exatamente "o cubo está resolvido" (os centros não
+        precisam ser checados: nunca saem do lugar).
+        """
+        constraints = (
+            self._cross_edge_constraints() + self._corner_constraints() + self._middle_edge_constraints()
+            + self._top_corner_constraints() + self._top_edge_constraints()
+        )
+        return self._constraints_satisfied(self._current_state(constraints), constraints)
+
     def solve(self):
         """
-        Desfaz o histórico de embaralhamento, animando cada movimento na tela.
+        Resolve o cubo a partir do estado ATUAL (não depende de
+        `Cube.scramble_history` — funciona mesmo após movimentos manuais,
+        ou numa sessão onde o histórico já foi zerado), usando o método de
+        camadas completo (Fases 1-5).
 
-        Ao final, limpa o histórico para que o próximo `K` só seja executado
-        caso novos `S` sejam pressionados.
+        Sai cedo se já estiver resolvido. Se alguma fase não conseguir
+        avançar (avisos "AVISO: ..." já são impressos por cada fase
+        individualmente), a resolução final ainda é verificada no final e
+        reportada com clareza. `SolverMoveLimitExceeded` (ver `MOVE_LIMIT`)
+        também é capturada aqui para abortar de forma limpa em vez de
+        propagar para a thread que chamou `solve()`.
         """
         if self.solving:
             return
         self.solving = True
+        self.move_count = 0
         print("Iniciando solução automática do cubo mágico...")
 
-        if not self.cube.scramble_history:
-            print("Nenhum embaralhamento registrado para desfazer.")
+        try:
+            if self.is_solved():
+                print("O cubo já está resolvido.")
+                return
+
+            self.solve_layer1_cross()
+            self.solve_layer1_corners()
+            self.solve_layer2()
+            self.solve_layer3_cross()
+            self.solve_layer3_orient_corners()
+            self.solve_layer3_position_corners()
+            self.solve_layer3_position_edges()
+
+            if self.is_solved():
+                print("Cubo mágico solucionado!")
+            else:
+                print("AVISO: a resolução terminou, mas o cubo não está totalmente resolvido — veja os avisos acima.")
+        except SolverMoveLimitExceeded as error:
+            print(f"AVISO: resolução abortada — {error}")
+        finally:
             self.solving = False
-            return
-
-        # Copia para evitar inconsistências caso novos embaralhamentos
-        # sejam invocados enquanto a solução roda em outra thread.
-        history_to_undo = list(reversed(self.cube.scramble_history))
-
-        for axis, index, angle in history_to_undo:
-            undo_angle = -angle
-            self.renderer.move_queue.append(("undo", axis, index, undo_angle))
-            self.wait_for_queue()
-
-        # Limpa o histórico após a solução
-        self.cube.scramble_history = []
-        print("Cubo mágico solucionado!")
-        self.solving = False

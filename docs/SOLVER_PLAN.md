@@ -1,14 +1,14 @@
 # Development Plan: General-Purpose Cube Solver
 
-> **Status:** Phases 0-5 are done — the cube fully solves end to end
-> (cross through last-layer permutation). See `docs/CHANGELOG.md` for what
-> actually changed in each phase, verified results, and any bugs found
-> along the way. This file stays a plan of record; the changelog is the
-> detailed history.
+> **Status:** Phases 0-6 are done — pressing `K` fully solves the cube from
+> ANY reachable state (scrambled via `S`, manual keys only, or a mix),
+> which was the original goal of this whole effort. See
+> `docs/CHANGELOG.md` for what actually changed in each phase, verified
+> results, and any bugs found along the way. This file stays a plan of
+> record; the changelog is the detailed history.
 >
-> **Not yet done:** Phase 6 (wire `solve()`/the `K` key to actually call
-> Phases 1-5 — today they're only reachable by calling them directly, e.g.
-> from tests; `K` still just reverses `scramble_history` as before).
+> **Not yet done:** Phase 7 (optional UX polish — faster/skippable
+> animation during solve, on-screen move counter).
 
 ## Problem statement
 
@@ -207,17 +207,35 @@ updates logical state correctly; existing headless consistency tests
   `docs/CHANGELOG.md`). 75 trials (15 × scramble lengths 1-100), zero
   failures, ~10.6s/trial average; live GUI run also confirmed 2/2.
 
-## Phase 6 — Orchestration & integration
+## Phase 6 — Orchestration & integration — ✅ done
 
-- Rewrite `CubeSolver.solve()` to run Phases 1–5 against the cube's
-  *current* state, independent of `scramble_history`. Drop (or keep only
-  as an optional debug fast-path) the history-reversal logic.
-- `InputHandler`'s `K` handler no longer needs `scramble_history` to be
-  non-empty — remove that implicit precondition; `solve()` should just
-  early-return if already solved.
-- Add a move-count safety cap (e.g. abort with a clear log message past
-  ~500 moves) so a gap in case-detection logic fails loudly instead of
-  hanging the solver thread forever.
+- Rewrote `CubeSolver.solve()` to run Phases 1-5 in order against the
+  cube's *current* state, dropping the old history-reversal logic
+  entirely (`Cube.scramble_history` is no longer read by the solver at
+  all — `scramble()` still populates it, harmlessly unused, since nothing
+  else in the app reads it either). Added `is_solved()` (reused across
+  the early-exit check and the final verification) by combining every
+  phase's own constraint-builders — it was "free" given the existing
+  constraint infrastructure, not new solving logic.
+- `InputHandler`'s `K` handler needed **no changes**: it already just
+  called `solver.solve()` unconditionally (aside from the `not solving`
+  guard) — the old `scramble_history` precondition lived entirely inside
+  the old `solve()` body, so removing/replacing that body was sufficient.
+- Added `CubeSolver.MOVE_LIMIT` (500) and `SolverMoveLimitExceeded`: every
+  call to the base `move()` primitive counts against it, and `solve()`
+  catches the exception to report a clear warning instead of the solver
+  thread spinning forever on an uncovered case-detection gap. Normal
+  solves stay well under this (even the worst observed OLL/PLL fallback
+  cases).
+- **Test:** verified `solve()`/`K` directly (not just the individual
+  phase methods) across: an already-solved cube (clean no-op), 75
+  scrambled trials (lengths 1-100, all solved), a cube touched only by
+  manual moves with `scramble_history` empty the whole time (**the
+  original motivating limitation from before this whole effort started**
+  — confirmed working end-to-end through the real `K` key, not just
+  headlessly), a mixed scramble+manual state, and calling `solve()` twice
+  in a row (idempotent, second call near-instant). See
+  `docs/CHANGELOG.md`.
 
 ## Phase 7 — UX polish (optional)
 

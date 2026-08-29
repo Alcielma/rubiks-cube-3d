@@ -3,6 +3,73 @@
 Tracks all changes made as part of the general-purpose solver effort (see
 `docs/SOLVER_PLAN.md` for the phased plan this follows). Newest first.
 
+## Phase 6 — Orchestration & integration (2026-08-22)
+
+**Goal:** wire `CubeSolver.solve()` (what the `K` key calls) to actually
+run the full Phase 1-5 pipeline against the cube's current state, instead
+of the original scramble-history-reversal logic. This is the point of the
+whole multi-phase effort: `K` should now solve the cube from *any*
+reachable state.
+
+### Added
+- `CubeSolver.is_solved()`: checks the entire cube (all 20 movable
+  pieces) by combining every phase's own constraint-builders
+  (`_cross_edge_constraints` + `_corner_constraints` +
+  `_middle_edge_constraints` + `_top_corner_constraints` +
+  `_top_edge_constraints`). No new solving logic — this was "free" given
+  the constraint infrastructure already built across Phases 1-5. Used for
+  `solve()`'s early-exit ("already solved") and final verification.
+- `CubeSolver.MOVE_LIMIT` (500) / `SolverMoveLimitExceeded`: `move()`
+  counts every move against this limit; `solve()` catches the exception
+  and reports a clear warning instead of the solver thread spinning
+  forever if some future case ever falls through every phase's existing
+  safety nets uncovered by tests.
+- Rewrote `solve()`: early-exits if already solved, otherwise runs
+  `solve_layer1_cross` → `solve_layer1_corners` → `solve_layer2` →
+  `solve_layer3_cross` → `solve_layer3_orient_corners` →
+  `solve_layer3_position_corners` → `solve_layer3_position_edges` in
+  order, then verifies and reports the final state. Dropped the old
+  history-reversal loop entirely.
+
+### Changed / removed
+- `solve()` no longer reads `Cube.scramble_history` at all (previously:
+  `if not self.cube.scramble_history: return` early, then replay it
+  reversed). `scramble()` still populates the list — removing that too
+  was out of scope and not worth the churn since nothing reads it now —
+  but it's fully inert.
+- `InputHandler`'s `K` handler in `controller.py` needed **zero changes**:
+  it already just called `solver.solve()` unconditionally (aside from the
+  `not solving` guard). The `scramble_history` precondition lived
+  entirely inside the old `solve()` body, so replacing that body was
+  sufficient — worth noting since the original plan draft expected a
+  controller-side change too.
+
+### Verified
+- Headless, calling `solve()` (not the individual phase methods) directly:
+  an already-solved cube (clean no-op, confirmed via `is_solved()`), 75
+  scrambled trials (15 × scramble lengths 1/5/20/50/100), a cube touched
+  only by manual moves with `scramble_history` empty throughout, a mixed
+  scramble+manual state with history manually cleared mid-session, and
+  calling `solve()` twice back to back (idempotent — second call returns
+  in ~0.001s). All passed, zero failures.
+- Live GUI (real `Renderer`, real `InputHandler`, genuine posted `S`/`R`/
+  `U'`/`F`/`K` key events — not calling solver methods directly): `S` then
+  `K` solved correctly, and — the capstone check — pressing only manual
+  face keys (never `S`) with `scramble_history` confirmed empty, then
+  `K`, solved the cube correctly through the real key-handling path. This
+  is the literal original limitation reported at the very start of this
+  effort ("does `K` solve consistently" → "no, only after `S`"), now
+  fixed end to end.
+- Discovered while testing this phase (not a code bug, an environment
+  one): the actual running app the user launches (`run.sh` in the shared
+  checkout at the repo root) is on a different branch/commit than this
+  work — all of Phases 0-6 live only on `worktree-solver-plan`, checked
+  out in this session's isolated worktree. Set up a second `.venv` and
+  `run.sh` inside the worktree itself so the finished solver can actually
+  be run and tried, without needing to merge branches first.
+
+---
+
 ## Phase 5 — Last layer permutation / 2-look PLL (2026-08-22)
 
 **Goal:** implement `solve_layer3_position_corners` and
