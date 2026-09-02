@@ -59,15 +59,28 @@ class Matrix3:
         )
 
     def multiply(self, other):
-        """Retorna nova matriz = this * other (multiplicação matricial padrão)."""
-        result = Matrix3()
-        for i in range(3):
-            for j in range(3):
-                result.data[i][j] = sum(
-                    self.data[i][k] * other.data[k][j]
-                    for k in range(3)
-                )
-        return result
+        """
+        Retorna nova matriz = this * other (multiplicação matricial padrão).
+
+        Desenrolada manualmente (sem laços/geradores): esta é a operação
+        mais chamada durante a animação E durante a busca do solver
+        (solver/search.py explora até algumas centenas de milhares de
+        estados, cada um recalculando a orientação de várias peças), então
+        o overhead de laços em Python puro é bem mensurável aqui.
+        """
+        a = self.data
+        b = other.data
+        return Matrix3(
+            a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0],
+            a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1],
+            a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2] * b[2][2],
+            a[1][0] * b[0][0] + a[1][1] * b[1][0] + a[1][2] * b[2][0],
+            a[1][0] * b[0][1] + a[1][1] * b[1][1] + a[1][2] * b[2][1],
+            a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2] * b[2][2],
+            a[2][0] * b[0][0] + a[2][1] * b[1][0] + a[2][2] * b[2][0],
+            a[2][0] * b[0][1] + a[2][1] * b[1][1] + a[2][2] * b[2][1],
+            a[2][0] * b[0][2] + a[2][1] * b[1][2] + a[2][2] * b[2][2],
+        )
 
     def transform_vector(self, vec):
         """Aplica a matriz a um vetor 3D e retorna o vetor transformado."""
@@ -88,3 +101,19 @@ class Matrix3:
             self.data[0][2], self.data[1][2], self.data[2][2], 0,
             0, 0, 0, 1,
         ]
+
+
+def rotation_matrix_for_axis(axis, angle_deg):
+    """
+    Constrói a matriz de rotação para o eixo (0=x, 1=y, 2=z) e ângulo dados.
+
+    Única fonte de verdade para "qual função de rotação usar para qual eixo",
+    usada tanto por `Cube` (animação/estado permanente) quanto pela busca do
+    solver (cube/solver/search.py), que simula movimentos sem depender de Cube.
+    """
+    if axis == 0:
+        return Matrix3.rotation_x(angle_deg)
+    elif axis == 1:
+        return Matrix3.rotation_y(angle_deg)
+    else:
+        return Matrix3.rotation_z(angle_deg)

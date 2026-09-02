@@ -1,0 +1,282 @@
+# Development Plan: General-Purpose Cube Solver
+
+> **Status:** Phases 0-6 are done — pressing `K` fully solves the cube from
+> ANY reachable state (scrambled via `S`, manual keys only, or a mix),
+> which was the original goal of this whole effort. See
+> `docs/CHANGELOG.md` for what actually changed in each phase, verified
+> results, and any bugs found along the way. This file stays a plan of
+> record; the changelog is the detailed history.
+>
+> **Not yet done:** Phase 7 (optional UX polish — faster/skippable
+> animation during solve, on-screen move counter).
+
+## Problem statement
+
+`CubeSolver.solve()` currently only reverses `Cube.scramble_history` — it can
+undo exactly the moves `scramble()` made, in reverse, with each angle negated.
+It cannot solve:
+
+- A cube scrambled partly by hand (`L/R/U/D/F/B` keys), since manual turns
+  are never recorded in `scramble_history`.
+- A cube whose history was cleared/lost (e.g. after a previous solve, then a
+  few more manual turns).
+- Any state set up independently of this app's own move log.
+
+Goal: make `K` solve the cube from **any legally-reachable state**, by reading
+the cube's current piece positions/orientations directly instead of relying
+on a move log. Every state produced by real quarter-turns is solvable by
+construction, so we don't need illegal-state detection — just a real
+solving algorithm.
+
+The natural fit is the **beginner's Layer-By-Layer (LBL) method**, since
+`src/solver/solver.py` already has placeholder methods named for exactly
+this method (`solve_layer1_cross`, `solve_layer1_corners`, `solve_layer2`,
+`solve_layer3_cross`, `solve_layer3_orient_corners`,
+`solve_layer3_position_corners`, `solve_layer3_position_edges`).
+
+---
+
+## Phase 0 — Foundations (refactor before adding solving logic) — ✅ done
+
+Goal: give the solver a clean, non-graphics API to read/mutate cube state,
+and a single source of truth for move execution.
+
+- Add `get_corner_cubie(color1, color2, color3)` next to the existing
+  `get_edge_cubie(color1, color2)` in `solver.py`.
+- Add `get_center_color(face)` — centers never move, so this is the fixed
+  reference for "what color belongs on this face."
+- Unify move application. Today the same concept is expressed three
+  different ways:
+  - `InputHandler` calls `cube.rotate_face(axis, index, angle)` directly.
+  - `Cube.scramble()` re-implements the rotation math inline instead of
+    calling `rotate_face`.
+  - `CubeSolver` has unused `move_L`/`move_L_prime`/etc. helpers that push
+    `(name, axis, index, angle)` onto `renderer.move_queue`, but `solve()`
+    itself bypasses them and pushes tuples directly.
+
+  Consolidate to one path: a `Cube.apply_move(notation)` (or equivalent)
+  that all three call sites use, so future algorithm code can't drift out
+  of sync with manual/scramble behavior.
+- Add 180° turn support. LBL algorithms use double moves (`U2`, `R2`, ...)
+  constantly; today only ±90° is exercised. Verify `Cube.update()`'s step
+  clamping and `Matrix3.rotation_*` behave correctly for a 180° target, and
+  extend `move_queue` tuples / notation parsing to include doubles.
+- Define a standard move-notation parser: `U, U', U2, D, D', D2, L, R, F, B,
+  ...` → `(axis, index, angle)`, matching this project's fixed color/axis
+  scheme (documented in `README.md`'s "Cores das faces" section).
+
+**Exit criteria:** manual keys, `scramble()`, and the solver all route
+through the same move-application function; a 180° move animates and
+updates logical state correctly; existing headless consistency tests
+(from this session) still pass.
+
+---
+
+## Phase 1 — Bottom cross (first layer edges) — ✅ done
+
+- Implemented `solve_layer1_cross` — but not via a hand-derived case table
+  as originally sketched here. A generic BFS (`solver/search.py`) proved
+  both simpler and more robust: manually enumerating every
+  position/orientation/already-placed-edges case is exactly the kind of
+  thing that fails silently on a case nobody thought of (see the
+  `get_global_colors` bug in the changelog). Each edge's placement is
+  found by searching for the shortest move sequence that keeps all
+  previously-placed edges fixed while placing the next one.
+- **Test:** 1500 randomized headless trials (scramble lengths 1-100) — all
+  solved, ~26ms/trial. Live GUI run confirmed the animated path too. See
+  `docs/CHANGELOG.md` for full results.
+
+## Phase 2 — First layer corners — ✅ done
+
+- Implemented `solve_layer1_corners` using the same BFS-over-constraints
+  technique as Phase 1, generalized: a shared `_constraint()` /
+  `_constraints_satisfied()` / `_solve_constraints_incrementally()` now
+  back both the cross and the corners, rather than duplicating the
+  per-piece search loop. The cross's 4 edges are included as fixed
+  constraints from the start of corner-solving.
+- Tracking 4 cross edges + up to 4 corners jointly (8 pieces) made the
+  original plain BFS from Phase 1 too slow (~30s for one cube). Fixed by
+  adding bidirectional BFS to `solver/search.py`: since the goal for every
+  constraint here is always "piece at its home position, identity
+  orientation" (that's what "correct" means), the goal state is known
+  explicitly, so the search can meet in the middle instead of only
+  searching forward. This took corner-solving from ~30s to ~0.2s per cube.
+- **Test:** 1500 randomized headless trials (scramble lengths 1-100) —
+  full first layer (cross + corners) solved 1500/1500, ~84ms/trial. Live
+  GUI run confirmed the animated path too. See `docs/CHANGELOG.md`.
+
+## Phase 3 — Second layer edges (F2L) — ✅ done
+
+- Implemented `solve_layer2` with the same constraint-BFS technique as
+  Phases 1-2 (no hand-derived left-insert/right-insert case tables
+  needed): the 4 middle-layer edges (no top/bottom color) are placed one
+  at a time, with the entire first layer (cross + corners) included as
+  fixed constraints from the start.
+- Tracking up to 12 pieces jointly (8 from the first layer + 4 F2L edges)
+  exposed a second performance cliff even with Phase 2's bidirectional
+  BFS: ~7-10s per cube, because simulating Matrix3 floating-point
+  rotations for that many pieces per search node adds up over the states
+  a bidirectional search still has to expand. Fixed by precomputing a
+  move-effect lookup table: every orientation reachable by a cube piece is
+  one of exactly 24 elements of the cube's rotation group, so each piece
+  is represented during search as (position, orientation-id 0-23) and
+  applying a move becomes a single dict lookup instead of a matrix
+  multiply. Cut it to ~0.5s per cube (plus a smaller general win from
+  unrolling `Matrix3.multiply`, used everywhere else in the app too).
+- **Test:** 1500 randomized headless trials (scramble lengths 1-100) —
+  first two layers fully solved 1500/1500, ~158ms/trial. Live GUI run
+  confirmed the animated path too. See `docs/CHANGELOG.md`.
+
+## Phase 4 — Last layer orientation (2-look OLL) — ✅ done
+
+- Implemented differently than originally sketched here — not a
+  case-recognition table, and not a single joint search either:
+  - `solve_layer3_cross` (orient the 4 top edges) extended the
+    constraint/BFS machinery from Phases 1-3 to support *flexible*
+    targets (a piece may land in any of the 4 top slots — permutation is
+    Phase 5's job, only orientation matters here) and solved all 4 in one
+    joint search.
+  - `solve_layer3_orient_corners` needed a different approach: a single
+    joint search for all 4 corners sometimes requires a genuinely deep
+    sequence (~13-14 moves) because of the corner-twist parity invariant
+    (see below), which was too slow to use as the primary method. Instead
+    it repeats a **shallow "make progress" search** (find any short
+    sequence that orients at least one more corner, without disturbing
+    anything already correct) — the same idea as any real "2-look OLL":
+    apply a short trigger repeatedly with `U` adjustments in between. The
+    trigger the search finds on its own for the common case (2 faces, one
+    corner already correct) is, by coincidence of correctness, exactly
+    the classic **Sune** algorithm (`R U R' U R U2 R'`) — rediscovered
+    from scratch by BFS, not hand-entered.
+  - When even the shallow search finds no progress at all, a **guaranteed
+    fallback** (the original full joint search, deeper budget) handles
+    that round — necessary, not just a performance nicety: from certain
+    states (e.g. exactly 2 corners correct) orienting *exactly one more*
+    is mathematically impossible (the two remaining corners' twists must
+    sum to 0 mod 3, so from 2-correct the only reachable next milestone
+    is 4-correct, never 3; edges have the same "even flip sum" dead end).
+    This same shallow-search-plus-fallback strategy
+    (`CubeSolver._solve_orientation()`) ended up shared by both
+    `solve_layer3_cross` and `solve_layer3_orient_corners` — an initial
+    version only added it to corners, which caused genuine unsolved-cube
+    failures on edges at scramble length ≥20 until fixed. See
+    `docs/CHANGELOG.md` for the full story, including all the bugs found
+    and fixed along the way.
+- Scope: beginner 2-look OLL (a handful of cases via search, not a
+  hand-classified 57-case table).
+- **Test:** first two layers intact + whole top face one color. Full
+  regression across all 4 phases after the last fix: Phase 1 (1500
+  trials), Phase 2 (1500), Phase 3 (150), Phase 4 (100: 20 × scramble
+  lengths 1/5/20/50/100) — all passed, zero failures. Phase 4 averaged
+  ~8.4s/trial (dominated by the guaranteed-fallback path on harder
+  cases); a live GUI run with real animation also confirmed 2/2.
+
+## Phase 5 — Last layer permutation (2-look PLL) — ✅ done
+
+- Implemented with the exact same machinery as Phase 4, not new
+  algorithm-specific code: permutation and orientation turned out to be
+  the same *shape* of problem (some subset of pieces still "wrong" among
+  the same possibilities, solve all together), so
+  `CubeSolver._solve_with_progress()` (generalized from Phase 4's
+  OLL-only `_solve_orientation()`) and `_make_progress()` (generalized
+  from `_make_orientation_progress()`) now serve both.
+- `_top_corner_constraints()` / `_top_edge_constraints()`: exact
+  target-position constraints (same shape as Phase 1-2's
+  cross/corner constraints, just for "top" instead of "bottom") instead
+  of OLL's flexible ones — since orientation is already correct from
+  Phase 4, position is all that's left to fix. No separate AUF (final `U`
+  alignment) step needed: it falls out of the search automatically.
+- Unlike the plan's original "corners, then edges" framing: positions
+  corners and edges of the last layer **together in one pass**
+  (`_position_last_layer`), not as two independent steps. Permutation has
+  a *joint* parity invariant between corners and edges (total permutation
+  of the last layer is always even), so requiring "corners exactly
+  placed, edges anywhere" turned out to have no solution more than half
+  the time even at the guaranteed-fallback depth — solving both together
+  respects the invariant naturally. `solve_layer3_position_corners` and
+  `solve_layer3_position_edges` are both kept as public methods (matching
+  the plan's step naming) but do the same combined thing; calling both is
+  safe (the second is a no-op if the first finished).
+- The combined search also needed a deeper guaranteed-fallback budget
+  than OLL (16 vs 14) — pure permutation across all 8 last-layer pieces
+  at once sometimes has longer shortest solutions than orientation does.
+- **Test:** full pipeline (Phases 1-5) verified against genuine solved-cube
+  ground truth (each cubie's true creation position, captured *before*
+  scrambling — a test-script bug that captured it *after* scrambling
+  briefly looked like a real solver failure during development; see
+  `docs/CHANGELOG.md`). 75 trials (15 × scramble lengths 1-100), zero
+  failures, ~10.6s/trial average; live GUI run also confirmed 2/2.
+
+## Phase 6 — Orchestration & integration — ✅ done
+
+- Rewrote `CubeSolver.solve()` to run Phases 1-5 in order against the
+  cube's *current* state, dropping the old history-reversal logic
+  entirely (`Cube.scramble_history` is no longer read by the solver at
+  all — `scramble()` still populates it, harmlessly unused, since nothing
+  else in the app reads it either). Added `is_solved()` (reused across
+  the early-exit check and the final verification) by combining every
+  phase's own constraint-builders — it was "free" given the existing
+  constraint infrastructure, not new solving logic.
+- `InputHandler`'s `K` handler needed **no changes**: it already just
+  called `solver.solve()` unconditionally (aside from the `not solving`
+  guard) — the old `scramble_history` precondition lived entirely inside
+  the old `solve()` body, so removing/replacing that body was sufficient.
+- Added `CubeSolver.MOVE_LIMIT` (500) and `SolverMoveLimitExceeded`: every
+  call to the base `move()` primitive counts against it, and `solve()`
+  catches the exception to report a clear warning instead of the solver
+  thread spinning forever on an uncovered case-detection gap. Normal
+  solves stay well under this (even the worst observed OLL/PLL fallback
+  cases).
+- **Test:** verified `solve()`/`K` directly (not just the individual
+  phase methods) across: an already-solved cube (clean no-op), 75
+  scrambled trials (lengths 1-100, all solved), a cube touched only by
+  manual moves with `scramble_history` empty the whole time (**the
+  original motivating limitation from before this whole effort started**
+  — confirmed working end-to-end through the real `K` key, not just
+  headlessly), a mixed scramble+manual state, and calling `solve()` twice
+  in a row (idempotent, second call near-instant). See
+  `docs/CHANGELOG.md`.
+
+## Phase 7 — UX polish (optional)
+
+- Beginner LBL solutions are long (~100–150 turns from a 20–25 move
+  scramble). Consider a faster `animation_speed` during solve, or a
+  toggle to skip animation entirely, plus an on-screen move counter.
+
+## Phase 8 — Testing strategy (throughout, not just at the end)
+
+- Extend the headless test harness already used to validate the
+  history-reversal solver: generate states via (a) `scramble()`, (b)
+  random *manual* moves not recorded in any history, and (c) mixes of
+  both — then assert `is_solved()` after running the new solver. (b) is
+  the key new capability this plan adds over the current implementation.
+- Run each phase's isolated test (Phases 1–5 above) before wiring
+  everything together in Phase 6 — this makes it far easier to localize a
+  bad case-detection branch.
+- Target ≥1000 random trials per phase before calling it done, matching
+  the rigor used to validate the current reversal-based solver.
+
+## Phase 9 — Stretch goal (optional, not required for "solve any state")
+
+- Once beginner LBL is solid, consider an optimal/near-optimal solver
+  (Kociemba's two-phase algorithm) as an advanced mode behind a flag.
+  This needs coordinate representations and precomputed pruning tables —
+  substantially more work than LBL, and out of scope unless specifically
+  wanted later.
+
+---
+
+## Key risks
+
+- **Duplicated move logic** (Phase 0) is the most valuable early fix —
+  every later phase adds moves programmatically, so any divergence
+  between `scramble()`'s inline math and `rotate_face()` becomes a subtle,
+  hard-to-localize bug once case-detection algorithms are layered on top.
+- **No 180° move support today** — must be added before any LBL algorithm
+  can be encoded, since `U2`/`R2`/etc. appear in nearly every trigger.
+- **Case-detection correctness is the actual hard part**, not the move
+  execution (already proven reliable in the reversal solver). Build and
+  test each phase in isolation first.
+- Cube-local axes (not camera-relative) are already used correctly by
+  `rotate_face` — this must be preserved so algorithms stay valid
+  regardless of camera orientation.

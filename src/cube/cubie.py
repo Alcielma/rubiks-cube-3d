@@ -6,6 +6,7 @@ posição lógica, orientação, cores nas faces e renderização via OpenGL.
 from OpenGL.GL import *
 
 from cube.colors import BLACK, WHITE, YELLOW, BLUE, GREEN, RED, ORANGE
+from cube.notation import FACE_NORMALS, face_for_normal
 from graphics.matrix import Matrix3
 
 
@@ -129,15 +130,6 @@ class Cubie:
         Retorna as cores que aparecem em cada face GLOBAL do cubo mágico,
         levando em conta a orientação atual do cubinho.
         """
-        local_normals = {
-            "front": (0, 0, 1),
-            "back": (0, 0, -1),
-            "left": (-1, 0, 0),
-            "right": (1, 0, 0),
-            "top": (0, 1, 0),
-            "bottom": (0, -1, 0),
-        }
-
         global_colors = {
             "front": None,
             "back": None,
@@ -147,23 +139,10 @@ class Cubie:
             "bottom": None,
         }
 
-        for local_face, normal in local_normals.items():
+        for local_face, normal in FACE_NORMALS.items():
             rotated_normal = self.orientation.transform_vector(normal)
-            rotated_normal = [round(x) for x in rotated_normal]
-
-            if rotated_normal == (0, 0, 1):
-                global_face = "front"
-            elif rotated_normal == (0, 0, -1):
-                global_face = "back"
-            elif rotated_normal == (-1, 0, 0):
-                global_face = "left"
-            elif rotated_normal == (1, 0, 0):
-                global_face = "right"
-            elif rotated_normal == (0, 1, 0):
-                global_face = "top"
-            elif rotated_normal == (0, -1, 0):
-                global_face = "bottom"
-            else:
+            global_face = face_for_normal(rotated_normal)
+            if global_face is None:
                 continue
 
             global_colors[global_face] = self.stickers[local_face]

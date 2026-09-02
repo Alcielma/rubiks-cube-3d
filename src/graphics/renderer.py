@@ -34,6 +34,11 @@ class Renderer:
         self.font = None
         self.show_instructions = False
 
+        # Mensagem de "Resolvido em MM:SS" exibida após um K bem-sucedido
+        # (ver CubeSolver.solve()). None quando não há nada a mostrar;
+        # limpa ao mexer no cubo de novo (ver InputHandler).
+        self.solve_message = None
+
         # Fila de movimentos a animar; consumida pelo loop principal
         self.move_queue = []
         self.current_move = None
@@ -119,6 +124,22 @@ class Renderer:
             color=(255, 255, 255),
             bg=(51, 51, 51),
         )
+
+        if self.solve_message:
+            message_surface = self.font.render(self.solve_message, True, (255, 255, 255), (30, 110, 30))
+            box_width = message_surface.get_width() + 24
+            box_height = message_surface.get_height() + 16
+            box_x = (self.width - box_width) / 2
+            box_y = self.help_button_y
+
+            self._draw_rect(box_x, box_y, box_width, box_height, color=(0.12, 0.43, 0.12))
+            self._draw_pygame_text(
+                self.solve_message,
+                x=box_x + 12,
+                y=box_y + 8,
+                color=(255, 255, 255),
+                bg=(30, 110, 30),
+            )
 
         if self.show_instructions:
             instructions = [
